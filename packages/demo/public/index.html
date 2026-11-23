@@ -26,7 +26,7 @@
   </section>
   <section class="card" id="css-scenario">
     <h2>CSS-blocked button</h2>
-    <button id="broken-button" type="button">Run action</button>
+    <button id="broken-button" type="button" data-phantom-outcome="#css-state">Run action</button>
     <p id="css-state">Before: the action has not run.</p>
     <button id="css-activate" type="button">Activate bug</button><button id="css-reset" type="button">Reset to working</button>
   </section>
@@ -39,7 +39,7 @@
   </section>
   <section class="card" id="form-scenario">
     <h2>Broken form button</h2>
-    <form id="demo-form"><label>Demo name <input name="demoName" autocomplete="off"></label><button id="form-button" type="button">Save demo entry</button></form>
+    <form id="demo-form"><label>Demo name <input name="demoName" autocomplete="off"></label><button id="form-button" type="button" data-phantom-submit data-phantom-outcome="#form-state">Save demo entry</button></form>
     <p id="form-state">Before: the form has not submitted.</p>
     <button id="form-activate" type="button">Activate bug</button><button id="form-reset" type="button">Reset to working</button>
   </section>

@@ -35,6 +35,7 @@ function outline(target: HTMLElement, color: string): void {
 
 function suspect(kind: FailureKind, target: HTMLElement, diagnosis: Diagnosis): void {
   if (!enabled || !target.isConnected || isSensitiveTarget(target)) return;
+  if (failure?.state === "pending" || failure?.state === "verified") return;
   if (failure?.target === target && failure.state !== "undone") return;
   if (failure) restoreOutline(failure);
   failure = { kind, target, diagnosis, state: "suspected", originalOutline: target.style.outline, originalOutlineOffset: target.style.outlineOffset };
@@ -69,13 +70,17 @@ function watchRepairedClick(target: HTMLElement): void {
   awaitingInteraction = true;
   window.setTimeout(() => { awaitingInteraction = false; }, 1500);
   if (failure?.kind !== "css-button") return;
-  let outcome = false;
-  const observer = new MutationObserver(() => { outcome = true; });
-  observer.observe(target.parentElement ?? target, { childList: true, characterData: true, subtree: true });
+  const outcome = expectedOutcome(target);
+  const before = outcome?.textContent;
   window.setTimeout(() => {
-    observer.disconnect();
-    if (outcome && failure?.target === target && failure.state === "pending") verify();
+    if (outcome && outcome.textContent !== before && failure?.target === target && failure.state === "pending") verify();
   }, 700);
+}
+
+function expectedOutcome(target: HTMLElement): Element | null {
+  const selector = target.getAttribute("data-phantom-outcome");
+  if (!selector) return null;
+  try { return target.ownerDocument.querySelector(selector); } catch { return null; }
 }
 
 function observeClick(event: MouseEvent): void {
@@ -189,7 +194,10 @@ if (origin) {
     suspect(candidate.kind, candidate.target, candidate.diagnosis);
   });
   document.addEventListener("submit", (event) => {
-    if (failure?.kind === "form-button" && awaitingInteraction && verifiesFormButton(event as SubmitEvent, failure.target as HTMLButtonElement)) verify();
+    if (failure?.kind !== "form-button" || !awaitingInteraction || !verifiesFormButton(event as SubmitEvent, failure.target as HTMLButtonElement)) return;
+    const outcome = expectedOutcome(failure.target);
+    const before = outcome?.textContent;
+    window.setTimeout(() => { if (outcome && outcome.textContent !== before) verify(); }, 0);
   }, true);
   window.addEventListener("hashchange", verifyNavigation);
   chrome.runtime.onMessage.addListener((untrusted: unknown, _sender, sendResponse) => {

@@ -5,7 +5,7 @@ import { isSensitiveTarget } from "./sensitive";
 export function supportedFormButton(target: EventTarget | null): HTMLButtonElement | null {
   if (!(target instanceof Element)) return null;
   const button = target.closest("button");
-  if (!(button instanceof HTMLButtonElement) || button.getAttribute("type")?.toLowerCase() !== "button") return null;
+  if (!(button instanceof HTMLButtonElement) || button.getAttribute("type")?.toLowerCase() !== "button" || !button.hasAttribute("data-phantom-submit")) return null;
   const form = button.form;
   if (!form || isSensitiveTarget(button) || isSensitiveTarget(form)) return null;
   return button;
@@ -18,7 +18,7 @@ export function diagnoseFormButton(button: HTMLButtonElement): Diagnosis {
     confidence: safe ? 0.9 : 0,
     source: "rules-only",
     action: safe ? "RESTORE_BUTTON_SEMANTICS" : "NO_SAFE_REPAIR",
-    safety: safe ? "Only the button's submit setting changes. PHANTOM will not send the form or read entered text, and Undo restores the original setting." : "PHANTOM will not inspect or change sensitive forms.",
+    safety: safe ? "Only the button's submit setting changes. PHANTOM does not read entered text or submit the form itself. Your next click may submit it. Undo restores the original setting." : "PHANTOM will not inspect or change sensitive forms.",
   };
 }
 

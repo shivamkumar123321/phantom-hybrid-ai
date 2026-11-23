@@ -4,7 +4,7 @@ import { applyFormButtonRepair, diagnoseFormButton, supportedFormButton, verifie
 describe("form button repair", () => {
   beforeEach(() => { document.body.innerHTML = ""; });
 
-  function button(html = '<form><input name="comment"><button type="button"><span>Send feedback</span></button></form>'): HTMLButtonElement {
+  function button(html = '<form><input name="comment"><button type="button" data-phantom-submit><span>Send feedback</span></button></form>'): HTMLButtonElement {
     document.body.innerHTML = html;
     return document.querySelector("button")!;
   }
@@ -35,6 +35,9 @@ describe("form button repair", () => {
   it("does not treat a working or detached button as broken", () => {
     expect(supportedFormButton(button('<form><button type="submit">Send</button></form>'))).toBeNull();
     expect(supportedFormButton(button('<button type="button">Send</button>'))).toBeNull();
+  });
+  it("does not turn an ordinary quiet button into a submitter", () => {
+    expect(supportedFormButton(button('<form><button type="button">Show help</button></form>'))).toBeNull();
   });
 
   it("requires this button's submit event before verification", () => {

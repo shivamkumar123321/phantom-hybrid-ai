@@ -62,6 +62,7 @@ test("four demo failures can be investigated, repaired, verified and undone", as
     await expect(panel.locator("#failure-status")).toContainText("Click the button");
     await demo.locator("#broken-button").click();
     await expect(panel.locator("#failure-status")).toContainText("button action worked");
+    await expect(demo.locator("#css-state")).toContainText("After: the action ran");
     await panel.locator("#undo").click();
     await expect(demo.locator("#broken-button")).toHaveCSS("pointer-events", "none");
 
@@ -86,6 +87,7 @@ test("four demo failures can be investigated, repaired, verified and undone", as
     await panel.locator("#apply").click();
     await demo.locator("#form-button").click();
     await expect(panel.locator("#failure-status")).toContainText("form handled submission");
+    await expect(demo.locator("#form-state")).toContainText("After: form submission handled locally");
     await panel.locator("#undo").click();
     await expect(demo.locator("#form-button")).toHaveAttribute("type", "button");
     await demo.evaluate(() => {
