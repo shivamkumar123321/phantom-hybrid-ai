@@ -6,7 +6,7 @@
 
 **Status:** ready-for-agent
 
-- [ ] Picking works while the Side Panel remains open and clearly highlights the current target.
-- [ ] A picked safe element can be diagnosed, previewed, repaired, verified, and undone.
-- [ ] Sensitive controls cannot be selected for inspection or repair.
-- [ ] A loaded-extension browser test covers a missed element and cancellation.
+- [x] Picking works while the Side Panel remains open and clearly highlights the current target.
+- [x] A picked safe element can be diagnosed, previewed, repaired, verified, and undone.
+- [x] Sensitive controls cannot be selected for inspection or repair.
+- [x] A loaded-extension browser test covers a missed element and cancellation.

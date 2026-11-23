@@ -1,7 +1,8 @@
-import { monitoringKey, repairCommand, siteOrigin, type Diagnosis, type FailureKind, type FailureView, type RepairState } from "@phantom/shared";
+import { monitoringKey, repairCommand, siteOrigin, type Diagnosis, type FailureKind, type FailureView, type PickerState, type RepairState } from "@phantom/shared";
 import { applyPointerEventsRepair, diagnoseBlockedButton, findBlockedButtonAtPoint, undoPointerEventsRepair, type PointerEventsSnapshot } from "./css-button";
 import { applyImageFallback, diagnoseBrokenImage, isFailedImage, isImageFallbackLoaded, knownImageFallback, restoreImageSource, type OriginalImageSource } from "./broken-image";
 import { applyFormButtonRepair, diagnoseFormButton, supportedFormButton, verifiesFormButton } from "./form-button";
+import { inspectPickedElement, resolvePickableTarget } from "./manual-picker";
 import { diagnoseNavigation, hasBrokenDestination, knownDestination } from "./navigation";
 import { isSensitiveTarget } from "./sensitive";
 
@@ -18,6 +19,14 @@ let enabled = false;
 let failure: Failure | null = null;
 let awaitingInteraction = false;
 let pendingClick: { target: HTMLElement; kind: FailureKind; diagnosis: Diagnosis } | null = null;
+let picking = false;
+let pickerNotice: string | null = null;
+let hovered: { target: HTMLElement; originalOutline: string; originalOutlineOffset: string } | null = null;
+let originalCursor: string | null = null;
+
+function pickerState(): PickerState {
+  return { active: picking, notice: pickerNotice };
+}
 
 function visibleState(): FailureView {
   if (!failure) return null;
@@ -31,6 +40,51 @@ function announce(): void {
 function outline(target: HTMLElement, color: string): void {
   target.style.outline = `2px solid ${color}`;
   target.style.outlineOffset = "3px";
+}
+
+function savedOutline(target: HTMLElement): { originalOutline: string; originalOutlineOffset: string } {
+  return failure?.target === target
+    ? { originalOutline: failure.originalOutline, originalOutlineOffset: failure.originalOutlineOffset }
+    : { originalOutline: target.style.outline, originalOutlineOffset: target.style.outlineOffset };
+}
+
+function clearHover(): void {
+  if (!hovered) return;
+  const { target, originalOutline, originalOutlineOffset } = hovered;
+  hovered = null;
+  if (failure?.target === target && failure.state !== "undone") {
+    outline(target, failure.state === "verified" ? "#16a34a" : failure.state === "preview" ? "#7c3aed" : "#eab308");
+    return;
+  }
+  target.style.outline = originalOutline;
+  target.style.outlineOffset = originalOutlineOffset;
+}
+
+function highlightHover(target: HTMLElement): void {
+  if (isSensitiveTarget(target)) { clearHover(); return; }
+  if (hovered?.target === target) return;
+  clearHover();
+  hovered = { target, ...savedOutline(target) };
+  outline(target, "#7c3aed");
+}
+
+function startPicking(): void {
+  picking = true;
+  pickerNotice = "Click a broken element on the page, or press Escape to cancel.";
+  if (originalCursor === null) originalCursor = document.documentElement.style.cursor;
+  document.documentElement.style.cursor = "crosshair";
+  announce();
+}
+
+function stopPicking(notice: string | null): void {
+  picking = false;
+  pickerNotice = notice;
+  clearHover();
+  if (originalCursor !== null) {
+    document.documentElement.style.cursor = originalCursor;
+    originalCursor = null;
+  }
+  announce();
 }
 
 function suspect(kind: FailureKind, target: HTMLElement, diagnosis: Diagnosis): void {
@@ -84,6 +138,33 @@ function expectedOutcome(target: HTMLElement): Element | null {
 }
 
 function observeClick(event: MouseEvent): void {
+  if (picking) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    const target = resolvePickableTarget(event.target, event.clientX, event.clientY);
+    if (!target) return;
+    const inspected = inspectPickedElement(target);
+    if (inspected.blocked) {
+      pickerNotice = inspected.reason;
+      clearHover();
+      announce();
+      return;
+    }
+    stopPicking(null);
+    const preserved = savedOutline(inspected.target);
+    if (failure && failure.target !== inspected.target) restoreOutline(failure);
+    failure = {
+      kind: inspected.kind,
+      target: inspected.target,
+      diagnosis: inspected.diagnosis,
+      state: "preview",
+      ...preserved,
+    };
+    outline(inspected.target, "#7c3aed");
+    announce();
+    return;
+  }
   if (!enabled || isSensitiveTarget(event.target)) return;
   void chrome.runtime.sendMessage({ type: "OBSERVED_INTERACTION", origin }).catch(() => {});
   const direct = event.target instanceof Element ? event.target.closest("a, button") : null;
@@ -130,7 +211,7 @@ function scanFailedImages(): void {
 }
 
 function applyRepair(current: Failure): string | null {
-  if (current.state !== "preview") return "No repair is ready";
+  if (current.state !== "preview" || current.diagnosis.action === "NO_SAFE_REPAIR") return "No safe repair is available";
   if (current.kind === "navigation") {
     const link = current.target as HTMLAnchorElement;
     const destination = knownDestination(link);
@@ -181,9 +262,22 @@ if (origin) {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "local" && changes[monitoringKey(origin)]) {
       enabled = changes[monitoringKey(origin)].newValue === true;
+      if (!enabled && picking) stopPicking(null);
       scanFailedImages();
     }
   });
+  document.addEventListener("pointermove", (event) => {
+    if (!picking) return;
+    const target = resolvePickableTarget(event.target, event.clientX, event.clientY);
+    if (target) highlightHover(target);
+    else clearHover();
+  }, true);
+  document.addEventListener("keydown", (event) => {
+    if (picking && event.key === "Escape") {
+      event.preventDefault();
+      stopPicking("Element picking cancelled.");
+    }
+  }, true);
   document.addEventListener("click", observeClick, true);
   document.addEventListener("error", observeImage, true);
   document.addEventListener("load", observeImage, true);
@@ -204,6 +298,23 @@ if (origin) {
     const parsed = repairCommand.safeParse(untrusted);
     if (!parsed.success) return false;
     if (parsed.data.type === "GET_FAILURE") { sendResponse(visibleState()); return false; }
+    if (parsed.data.type === "GET_PICKER_STATE") { sendResponse(pickerState()); return false; }
+    if (parsed.data.type === "START_PICKING") {
+      if (!enabled) { sendResponse({ error: "Monitoring is off" }); return false; }
+      if (failure?.state === "pending" || failure?.state === "verified") {
+        pickerNotice = "Undo the active repair before picking another element.";
+        sendResponse(pickerState());
+        return false;
+      }
+      startPicking();
+      sendResponse(pickerState());
+      return false;
+    }
+    if (parsed.data.type === "CANCEL_PICKING") {
+      if (picking) stopPicking("Element picking cancelled.");
+      sendResponse(pickerState());
+      return false;
+    }
     if (!failure || !failure.target.isConnected) { sendResponse({ error: "No active failure" }); return false; }
     if (!enabled && parsed.data.type !== "UNDO_REPAIR") { sendResponse({ error: "Monitoring is off" }); return false; }
     if (parsed.data.type === "INVESTIGATE") failure.state = "preview";

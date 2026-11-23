@@ -11,10 +11,12 @@ describe("sensitive target exclusion", () => {
     '<form><input name="cardNumber"><button>Continue</button></form>',
     '<form><input name="userName"><button>Sign in</button></form>',
     '<button aria-label="Verify OTP">Continue</button>',
+    '<button type="button">Log in</button>',
+    '<a href="/login">Account</a>',
     '<div contenteditable="true">text</div>',
   ])("excludes sensitive interaction: %s", (html) => {
     document.body.innerHTML = html;
-    expect(isSensitiveTarget(document.querySelector("button") ?? document.querySelector("input, div"))).toBe(true);
+    expect(isSensitiveTarget(document.querySelector("button, a, input, div"))).toBe(true);
   });
 
   it("admits an ordinary button", () => {

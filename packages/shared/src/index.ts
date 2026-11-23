@@ -24,14 +24,18 @@ export const diagnosis = z.object({
 });
 export type Diagnosis = z.infer<typeof diagnosis>;
 export type RepairState = "suspected" | "preview" | "pending" | "verified" | "undone";
-export type FailureKind = "navigation" | "css-button" | "image" | "form-button";
+export type FailureKind = "navigation" | "css-button" | "image" | "form-button" | "manual";
 export type FailureView = { kind: FailureKind; state: RepairState; diagnosis: Diagnosis | null } | null;
+export type PickerState = { active: boolean; notice: string | null };
 
 export const repairCommand = z.discriminatedUnion("type", [
   z.object({ type: z.literal("GET_FAILURE") }),
   z.object({ type: z.literal("INVESTIGATE") }),
   z.object({ type: z.literal("APPLY_REPAIR") }),
   z.object({ type: z.literal("UNDO_REPAIR") }),
+  z.object({ type: z.literal("GET_PICKER_STATE") }),
+  z.object({ type: z.literal("START_PICKING") }),
+  z.object({ type: z.literal("CANCEL_PICKING") }),
 ]);
 
 export type RepairCommand = z.infer<typeof repairCommand>;

@@ -3,11 +3,16 @@ const sensitiveAutocomplete = /^(?:current-password|new-password|one-time-code|c
 
 function describesSensitiveControl(element: Element): boolean {
   const attributes = ["name", "id", "type", "autocomplete", "aria-label", "placeholder", "role", "data-testid"];
-  return attributes.some((name) => {
+  if (attributes.some((name) => {
     const value = element.getAttribute(name);
     const words = value?.replace(/([a-z])([A-Z])/g, "$1 $2");
     return words !== undefined && (sensitiveWords.test(words) || (name === "autocomplete" && sensitiveAutocomplete.test(words)));
-  });
+  })) return true;
+  if (element instanceof HTMLButtonElement && sensitiveWords.test(element.textContent ?? "")) return true;
+  if (element instanceof HTMLAnchorElement) {
+    return sensitiveWords.test(element.textContent ?? "") || sensitiveWords.test(element.getAttribute("href") ?? "");
+  }
+  return false;
 }
 
 export function isSensitiveTarget(target: EventTarget | null): boolean {

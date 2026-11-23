@@ -2,12 +2,16 @@ import type { Diagnosis } from "@phantom/shared";
 
 export type PointerEventsSnapshot = { value: string; priority: string };
 
+export function isBlockedButton(element: Element): element is HTMLButtonElement {
+  return element instanceof HTMLButtonElement && !element.disabled && getComputedStyle(element).pointerEvents === "none";
+}
+
 function buttonAtPoint(root: Element, x: number, y: number): HTMLButtonElement | null {
   const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
   let visited = 0;
   let node: Node | null = root;
   while (node && visited++ < 120) {
-    if (node instanceof HTMLButtonElement && !node.disabled && getComputedStyle(node).pointerEvents === "none") {
+    if (node instanceof Element && isBlockedButton(node)) {
       const rect = node.getBoundingClientRect();
       if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom && rect.width > 0 && rect.height > 0) return node;
     }

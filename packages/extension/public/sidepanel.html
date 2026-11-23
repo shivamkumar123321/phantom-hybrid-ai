@@ -7,6 +7,11 @@
       <p id="site">Checking this tab…</p>
       <label class="switch"><input id="monitor" type="checkbox" disabled><span>Monitor this site</span></label>
       <p id="status" role="status" aria-live="polite"></p>
+      <div id="picker-controls">
+        <button id="pick" type="button" disabled>Something is broken</button>
+        <button id="cancel-pick" type="button" hidden>Cancel picking</button>
+        <p id="picker-status" role="status" aria-live="polite"></p>
+      </div>
       <section id="failure" hidden aria-live="polite">
         <h2>Suspected Failure</h2>
         <p id="failure-status"></p>
