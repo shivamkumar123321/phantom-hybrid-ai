@@ -6,7 +6,7 @@
 
 **Status:** ready-for-agent
 
-- [ ] The two apps have separate Hosting site configuration and documented environment templates.
-- [ ] Production AI calls enforce App Check with reCAPTCHA v3; a debug token is limited to local development and excluded from production builds.
-- [ ] The Demo Website control panel activates and resets each failure and shows before and after state and logs.
-- [ ] The loaded extension works against the separately hosted Demo Website and AI Companion, with a repeatable four-scenario browser check.
+- [x] The two apps have separate Hosting site configuration and documented environment templates.
+- [x] Production AI calls enforce App Check with reCAPTCHA v3; a debug token is limited to local development and excluded from production builds.
+- [x] The Demo Website control panel activates and resets each failure and shows before and after state and logs.
+- [x] The loaded extension works against the separately hosted Demo Website and AI Companion, with a repeatable four-scenario browser check.

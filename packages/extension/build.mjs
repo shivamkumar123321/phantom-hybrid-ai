@@ -1,9 +1,20 @@
 import { build } from "esbuild";
-import { copyFile, mkdir } from "node:fs/promises";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const root = dirname(fileURLToPath(import.meta.url));
+const companionOrigin = (() => {
+  const raw = process.env.COMPANION_ORIGIN?.trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    return parsed.protocol === "https:" ? parsed.origin : "";
+  } catch {
+    return "";
+  }
+})();
+
 await mkdir(join(root, "dist"), { recursive: true });
 for (const name of ["background", "content", "sidepanel"]) {
   await build({
@@ -13,8 +24,20 @@ for (const name of ["background", "content", "sidepanel"]) {
     format: "iife",
     target: "chrome120",
     minify: false,
+    define: {
+      __PHANTOM_COMPANION_ORIGIN__: JSON.stringify(companionOrigin),
+    },
   });
 }
-for (const name of ["manifest.json", "sidepanel.html", "sidepanel.css"]) {
+
+const manifest = JSON.parse(await readFile(join(root, "public", "manifest.json"), "utf8"));
+if (companionOrigin) {
+  const matches = new Set(manifest.externally_connectable?.matches ?? []);
+  matches.add(`${companionOrigin}/*`);
+  manifest.externally_connectable = { matches: [...matches] };
+}
+await writeFile(join(root, "dist", "manifest.json"), JSON.stringify(manifest, null, 2));
+
+for (const name of ["sidepanel.html", "sidepanel.css"]) {
   await copyFile(join(root, "public", name), join(root, "dist", name));
 }

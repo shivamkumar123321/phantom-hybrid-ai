@@ -79,6 +79,14 @@ async function writeRepairHistory(entries: RepairHistoryEntry[]): Promise<Repair
   return entries;
 }
 
+let historyQueue: Promise<unknown> = Promise.resolve();
+
+function mutateRepairHistory(fn: (current: RepairHistoryEntry[]) => RepairHistoryEntry[]): Promise<RepairHistoryEntry[]> {
+  const next = historyQueue.then(async () => writeRepairHistory(fn(await readRepairHistory())));
+  historyQueue = next.catch(() => {});
+  return next;
+}
+
 async function readCachedCommunityRecipes(origin: string): Promise<RepairRecipe[]> {
   const stored = await chrome.storage.local.get(communityRecipesKey(origin));
   return filterValidRecipes(stored[communityRecipesKey(origin)], origin);
@@ -266,15 +274,13 @@ chrome.runtime.onMessage.addListener((untrusted: unknown, sender, sendResponse) 
   if (message.type === "RECORD_REPAIR_HISTORY") {
     void (async () => {
       if (siteOrigin(sender.tab?.url ?? "") !== message.entry.origin) { sendResponse({ error: "Wrong site" }); return; }
-      const updated = upsertHistoryEntry(await readRepairHistory(), message.entry);
-      sendResponse({ history: await writeRepairHistory(updated) });
+      sendResponse({ history: await mutateRepairHistory((current) => upsertHistoryEntry(current, message.entry)) });
     })();
     return true;
   }
   if (message.type === "UPDATE_REPAIR_HISTORY") {
     void (async () => {
-      const updated = updateHistoryVerification(await readRepairHistory(), message.id, message.verificationResult);
-      sendResponse({ history: await writeRepairHistory(updated) });
+      sendResponse({ history: await mutateRepairHistory((current) => updateHistoryVerification(current, message.id, message.verificationResult)) });
     })();
     return true;
   }

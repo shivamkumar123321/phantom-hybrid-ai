@@ -6,82 +6,142 @@
   <style>
     body { margin: 0 auto; max-width: 760px; padding: 24px; font: 16px/1.5 system-ui, sans-serif; }
     .card { border: 1px solid #b5bcc7; border-radius: 10px; padding: 18px; margin: 16px 0; }
-    button { margin-right: 8px; padding: 8px 12px; }
+    button { margin-right: 8px; padding: 8px 12px; cursor: pointer; }
     a { color: #1457b0; }
     #destination { padding: 12px; background: #e8f6e8; }
     #destination:not(:target) { display: none; }
     #log { white-space: pre-wrap; background: #f3f4f6; padding: 12px; min-height: 56px; }
     #broken-button { pointer-events: none; }
     img { display: block; width: 96px; height: 96px; object-fit: contain; }
+    .summary-list { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 6px; }
   </style>
 </head>
 <body>
   <h1>PHANTOM Demo Website</h1>
-  <p>A controlled broken navigation scenario. Enable PHANTOM monitoring for this site, then click the broken link.</p>
-  <section class="card">
-    <h2>Navigation</h2>
+  <p>A controlled website with four deliberately broken client-side interactions. Enable PHANTOM monitoring for this site, then test each scenario.</p>
+  <section class="card" id="nav-scenario">
+    <h2>1. Broken navigation</h2>
     <a id="demo-link" href="#" data-href="#destination">View the destination</a>
     <p id="state">Before: the link is broken.</p>
     <div id="destination" tabindex="-1">Destination reached.</div>
   </section>
   <section class="card" id="css-scenario">
-    <h2>CSS-blocked button</h2>
+    <h2>2. CSS-blocked button</h2>
     <button id="broken-button" type="button" data-phantom-outcome="#css-state">Run action</button>
     <p id="css-state">Before: the action has not run.</p>
     <button id="css-activate" type="button">Activate bug</button><button id="css-reset" type="button">Reset to working</button>
   </section>
   <section class="card" id="image-scenario">
-    <h2>Broken image</h2>
+    <h2>3. Broken image</h2>
     <img id="broken-image" src="/missing-image.png" data-fallback-src="/backup.svg" alt="Demo illustration">
     <p id="image-state">Before: the image is broken.</p>
     <button id="image-activate" type="button">Activate bug</button><button id="image-reset" type="button">Reset to working</button>
     <img id="no-fallback-image" src="/missing-no-fallback.png" alt="No fallback example">
   </section>
   <section class="card" id="form-scenario">
-    <h2>Broken form button</h2>
+    <h2>4. Broken form button</h2>
     <form id="demo-form"><label>Demo name <input name="demoName" autocomplete="off"></label><button id="form-button" type="button" data-phantom-submit data-phantom-outcome="#form-state">Save demo entry</button></form>
     <p id="form-state">Before: the form has not submitted.</p>
     <button id="form-activate" type="button">Activate bug</button><button id="form-reset" type="button">Reset to working</button>
   </section>
-  <section class="card">
+  <section class="card" id="developer-controls">
     <h2>Developer controls</h2>
-    <button id="activate" type="button">Activate bug</button>
-    <button id="reset" type="button">Reset to working</button>
+    <div>
+      <button id="activate-all" type="button">Activate all bugs</button>
+      <button id="reset-all" type="button">Reset all to working</button>
+      <button id="activate" type="button">Activate bug</button>
+      <button id="reset" type="button">Reset to working</button>
+    </div>
     <p>Link state: <strong id="link-state">broken</strong></p>
+    <ul class="summary-list">
+      <li id="summary-nav">Navigation: broken</li>
+      <li id="summary-css">CSS button: broken</li>
+      <li id="summary-image">Image: broken</li>
+      <li id="summary-form">Form button: broken</li>
+    </ul>
     <h3>Event log</h3><div id="log" role="log" aria-live="polite"></div>
   </section>
   <script>
     const link = document.querySelector('#demo-link');
     const log = document.querySelector('#log');
     const state = document.querySelector('#state');
-    function record(message) { log.textContent += new Date().toLocaleTimeString() + ' ' + message + '\n'; }
-    function setBroken(broken) {
-      link.setAttribute('href', broken ? '#' : '#destination');
-      document.querySelector('#link-state').textContent = broken ? 'broken' : 'working';
-      state.textContent = broken ? 'Before: the link is broken.' : 'Before: the link works.';
-      history.replaceState(null, '', location.pathname);
-      record(broken ? 'Broken navigation activated.' : 'Working navigation restored.');
-    }
-    document.querySelector('#activate').addEventListener('click', () => setBroken(true));
-    document.querySelector('#reset').addEventListener('click', () => setBroken(false));
-    link.addEventListener('click', () => record('Navigation link clicked.'));
-    window.addEventListener('hashchange', () => {
-      if (location.hash === '#destination') { state.textContent = 'After: destination reached.'; record('Destination reached.'); }
-    });
     const cssButton = document.querySelector('#broken-button');
-    cssButton.addEventListener('click', () => { document.querySelector('#css-state').textContent = 'After: the action ran.'; record('CSS button action ran.'); });
-    document.querySelector('#css-activate').addEventListener('click', () => { cssButton.style.pointerEvents = 'none'; document.querySelector('#css-state').textContent = 'Before: the action has not run.'; record('CSS-blocked button activated.'); });
-    document.querySelector('#css-reset').addEventListener('click', () => { cssButton.style.pointerEvents = 'auto'; document.querySelector('#css-state').textContent = 'Before: the action has not run.'; record('CSS button reset.'); });
     const brokenImage = document.querySelector('#broken-image');
-    document.querySelector('#image-activate').addEventListener('click', () => { brokenImage.src = '/missing-image.png?again=' + Date.now(); document.querySelector('#image-state').textContent = 'Before: the image is broken.'; record('Broken image activated.'); });
-    document.querySelector('#image-reset').addEventListener('click', () => { brokenImage.src = '/backup.svg'; document.querySelector('#image-state').textContent = 'Before: the image works.'; record('Image reset.'); });
-    brokenImage.addEventListener('load', () => { if (brokenImage.currentSrc.endsWith('/backup.svg')) { document.querySelector('#image-state').textContent = 'After: backup image loaded.'; record('Backup image loaded.'); } });
     const form = document.querySelector('#demo-form');
     const formButton = document.querySelector('#form-button');
-    form.addEventListener('submit', (event) => { event.preventDefault(); document.querySelector('#form-state').textContent = 'After: form submission handled locally.'; record('Demo form submission handled.'); });
-    document.querySelector('#form-activate').addEventListener('click', () => { formButton.type = 'button'; document.querySelector('#form-state').textContent = 'Before: the form has not submitted.'; record('Broken form button activated.'); });
-    document.querySelector('#form-reset').addEventListener('click', () => { formButton.type = 'submit'; document.querySelector('#form-state').textContent = 'Before: the form has not submitted.'; record('Form button reset.'); });
-    record('Broken navigation active.');
+
+    let imageWasReset = false;
+    function record(message) { log.textContent += new Date().toLocaleTimeString() + ' ' + message + '\n'; }
+    function updateSummary() {
+      const navBroken = (link.getAttribute('href') || '#') === '#';
+      document.querySelector('#link-state').textContent = navBroken ? 'broken' : 'working';
+      document.querySelector('#summary-nav').textContent = 'Navigation: ' + (location.hash === '#destination' ? 'after (destination reached)' : navBroken ? 'before (broken)' : 'reset (working)');
+      const cssBlocked = getComputedStyle(cssButton).pointerEvents === 'none';
+      document.querySelector('#summary-css').textContent = 'CSS button: ' + (document.querySelector('#css-state').textContent.startsWith('After:') ? 'after (action ran)' : cssBlocked ? 'before (broken)' : 'reset (working)');
+      const imgOk = brokenImage.complete && brokenImage.naturalWidth > 0 && brokenImage.currentSrc.endsWith('/backup.svg');
+      document.querySelector('#summary-image').textContent = 'Image: ' + (imgOk ? (imageWasReset ? 'reset (working)' : 'after (backup loaded)') : 'before (broken)');
+      document.querySelector('#summary-form').textContent = 'Form button: ' + (document.querySelector('#form-state').textContent.startsWith('After:') ? 'after (submitted)' : formButton.type === 'button' ? 'before (broken)' : 'reset (working)');
+    }
+    function setNavigationBroken(broken) {
+      link.setAttribute('href', broken ? '#' : '#destination');
+      state.textContent = broken ? 'Before: the link is broken.' : 'Before: the link works.';
+      history.replaceState(null, '', location.pathname);
+      updateSummary();
+      record(broken ? 'Broken navigation activated.' : 'Working navigation restored.');
+    }
+    function setCssBroken(broken) {
+      cssButton.style.pointerEvents = broken ? 'none' : 'auto';
+      document.querySelector('#css-state').textContent = 'Before: the action has not run.';
+      updateSummary();
+      record(broken ? 'CSS-blocked button activated.' : 'CSS button reset.');
+    }
+    function setImageBroken(broken) {
+      imageWasReset = !broken;
+      brokenImage.src = broken ? '/missing-image.png?again=' + Date.now() : '/backup.svg';
+      document.querySelector('#image-state').textContent = broken ? 'Before: the image is broken.' : 'Reset: working image loaded.';
+      updateSummary();
+      record(broken ? 'Broken image activated.' : 'Image reset.');
+    }
+    function setFormBroken(broken) {
+      formButton.type = broken ? 'button' : 'submit';
+      document.querySelector('#form-state').textContent = 'Before: the form has not submitted.';
+      updateSummary();
+      record(broken ? 'Broken form button activated.' : 'Form button reset.');
+    }
+
+    document.querySelector('#activate').addEventListener('click', () => setNavigationBroken(true));
+    document.querySelector('#reset').addEventListener('click', () => setNavigationBroken(false));
+    document.querySelector('#css-activate').addEventListener('click', () => setCssBroken(true));
+    document.querySelector('#css-reset').addEventListener('click', () => setCssBroken(false));
+    document.querySelector('#image-activate').addEventListener('click', () => setImageBroken(true));
+    document.querySelector('#image-reset').addEventListener('click', () => setImageBroken(false));
+    document.querySelector('#form-activate').addEventListener('click', () => setFormBroken(true));
+    document.querySelector('#form-reset').addEventListener('click', () => setFormBroken(false));
+    document.querySelector('#activate-all').addEventListener('click', () => {
+      setNavigationBroken(true); setCssBroken(true); setImageBroken(true); setFormBroken(true);
+    });
+    document.querySelector('#reset-all').addEventListener('click', () => {
+      setNavigationBroken(false); setCssBroken(false); setImageBroken(false); setFormBroken(false);
+    });
+
+    link.addEventListener('click', () => record('Navigation link clicked.'));
+    window.addEventListener('hashchange', () => {
+      if (location.hash === '#destination') { state.textContent = 'After: destination reached.'; updateSummary(); record('Destination reached.'); }
+    });
+    cssButton.addEventListener('click', () => { document.querySelector('#css-state').textContent = 'After: the action ran.'; updateSummary(); record('CSS button action ran.'); });
+    brokenImage.addEventListener('load', () => {
+      if (brokenImage.currentSrc.endsWith('/backup.svg')) {
+        document.querySelector('#image-state').textContent = imageWasReset ? 'Reset: working image loaded.' : 'After: backup image loaded.';
+        updateSummary();
+        if (!imageWasReset) { record('Backup image loaded.'); }
+      }
+    });
+    form.addEventListener('submit', (event) => {
+      event.preventDefault(); document.querySelector('#form-state').textContent = 'After: form submission handled locally.'; updateSummary(); record('Demo form submission handled.');
+    });
+
+    updateSummary();
+    record('All four broken demo scenarios active.');
   </script>
 </body>
 </html>

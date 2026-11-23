@@ -5,11 +5,33 @@ import { pipelineEvent } from "./pipeline";
 import { repairRecipe } from "./recipes";
 import { evidencePacket } from "./sanitize";
 
-export const ALLOWED_COMPANION_ORIGINS = ["http://127.0.0.1:4174", "http://localhost:4174"] as const;
-export const DEFAULT_COMPANION_URL = "http://127.0.0.1:4174/";
+const LOCAL_COMPANION_ORIGINS = ["http://127.0.0.1:4174", "http://localhost:4174"] as const;
+
+export function parseCompanionOrigins(configuredOrigin?: string): string[] {
+  const origins: string[] = [...LOCAL_COMPANION_ORIGINS];
+  const candidate = configuredOrigin?.trim();
+  if (candidate) {
+    try {
+      const parsed = new URL(candidate);
+      if (parsed.protocol === "https:" && !origins.includes(parsed.origin)) origins.push(parsed.origin);
+    } catch { /* Ignore invalid configured origin. */ }
+  }
+  return origins;
+}
+
+declare const __PHANTOM_COMPANION_ORIGIN__: string | undefined;
+const configuredCompanionOrigin = typeof __PHANTOM_COMPANION_ORIGIN__ === "string"
+  ? __PHANTOM_COMPANION_ORIGIN__
+  : (typeof process !== "undefined" ? process.env.COMPANION_ORIGIN : "");
+
+export const ALLOWED_COMPANION_ORIGINS = parseCompanionOrigins(configuredCompanionOrigin);
+export const DEFAULT_COMPANION_URL = (() => {
+  const prod = ALLOWED_COMPANION_ORIGINS.find((origin) => origin.startsWith("https://"));
+  return `${prod ?? LOCAL_COMPANION_ORIGINS[0]}/`;
+})();
 
 export function isAllowedCompanionOrigin(origin: string): boolean {
-  return (ALLOWED_COMPANION_ORIGINS as readonly string[]).includes(origin);
+  return ALLOWED_COMPANION_ORIGINS.includes(origin);
 }
 
 export const companionRequest = z.discriminatedUnion("type", [
