@@ -23,6 +23,8 @@ export const diagnosis = z.object({
   safety: z.string(),
 });
 export type Diagnosis = z.infer<typeof diagnosis>;
+export type RepairState = "suspected" | "preview" | "pending" | "verified" | "undone";
+export type FailureView = { state: RepairState; diagnosis: Diagnosis | null } | null;
 
 export const repairCommand = z.discriminatedUnion("type", [
   z.object({ type: z.literal("GET_FAILURE") }),

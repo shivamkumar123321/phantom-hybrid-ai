@@ -1,4 +1,4 @@
-import { interactionCountKey, siteOrigin } from "@phantom/shared";
+import { interactionCountKey, siteOrigin, type FailureView } from "@phantom/shared";
 
 const site = document.querySelector<HTMLElement>("#site")!;
 const status = document.querySelector<HTMLElement>("#status")!;
@@ -11,8 +11,6 @@ const apply = document.querySelector<HTMLButtonElement>("#apply")!;
 const undo = document.querySelector<HTMLButtonElement>("#undo")!;
 let currentOrigin: string | null = null;
 let currentTabId: number | null = null;
-
-type FailureView = { state: "suspected" | "preview" | "pending" | "verified" | "undone"; diagnosis: { reason: string; confidence: number; source: string; action: string; safety: string } | null } | null;
 
 function renderFailure(view: FailureView): void {
   failureSection.hidden = !view || view.state === "undone";

@@ -34,11 +34,25 @@ test("broken navigation can be investigated, repaired, verified and undone", asy
     await panel.locator("#apply").click();
     await expect(demo.locator("#demo-link")).toHaveAttribute("href", "#destination");
     await expect(panel.locator("#failure-status")).toContainText("Click the link");
+    await demo.evaluate(() => { location.hash = "destination"; });
+    await expect(panel.locator("#failure-status")).toContainText("Click the link");
+    await demo.evaluate(() => { history.replaceState(null, "", location.pathname); });
     await demo.locator("#demo-link").click();
     await expect(panel.locator("#failure-status")).toContainText("navigation worked");
     await panel.locator("#undo").click();
     await expect(demo.locator("#demo-link")).toHaveAttribute("href", "#");
     await expect(demo).not.toHaveURL(/#destination$/);
+    await demo.evaluate(() => {
+      const link = document.createElement("a");
+      link.id = "working-handler";
+      link.href = "#";
+      link.textContent = "Show details";
+      link.addEventListener("click", () => { link.insertAdjacentText("afterend", "Details shown"); });
+      document.body.append(link);
+    });
+    await demo.locator("#working-handler").click();
+    await expect(demo.getByText("Details shown")).toBeVisible();
+    await expect(panel.locator("#failure")).toBeHidden();
   } finally {
     await context.close();
     server.kill();
