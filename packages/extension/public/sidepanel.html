@@ -7,6 +7,20 @@
       <p id="site">Checking this tab…</p>
       <label class="switch"><input id="monitor" type="checkbox" disabled><span>Monitor this site</span></label>
       <p id="status" role="status" aria-live="polite"></p>
+      <section id="failure" hidden aria-live="polite">
+        <h2>Suspected Failure</h2>
+        <p id="failure-status"></p>
+        <div id="diagnosis" hidden>
+          <p id="reason"></p>
+          <p id="confidence"></p>
+          <p id="source"></p>
+          <p id="action"></p>
+          <p id="safety"></p>
+        </div>
+        <button id="investigate" type="button">Investigate</button>
+        <button id="apply" type="button" hidden>Apply Repair</button>
+        <button id="undo" type="button" hidden>Undo</button>
+      </section>
       <p class="note">Monitoring is off on new sites. Password, payment, login, and security controls are always skipped.</p>
     </main>
     <script src="sidepanel.js"></script>

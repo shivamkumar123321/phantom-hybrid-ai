@@ -4,11 +4,13 @@
   "type": "module",
   "workspaces": ["packages/*"],
   "scripts": {
-    "build": "npm run build -w @phantom/extension",
+    "build": "npm run build -w @phantom/extension && npm run build -w @phantom/demo",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.56.0",
     "@types/chrome": "^0.1.31",
     "esbuild": "^0.25.0",
     "jsdom": "^26.1.0",

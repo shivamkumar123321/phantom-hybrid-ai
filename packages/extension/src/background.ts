@@ -11,6 +11,13 @@ chrome.action.onClicked.addListener(async () => {
 });
 
 chrome.runtime.onMessage.addListener((untrusted: unknown, sender, sendResponse) => {
+  if (typeof untrusted === "object" && untrusted !== null && "type" in untrusted && untrusted.type === "FAILURE_UPDATED") {
+    const claimedOrigin = "origin" in untrusted && typeof untrusted.origin === "string" ? untrusted.origin : null;
+    if (sender.tab?.id !== undefined && claimedOrigin && siteOrigin(sender.tab.url ?? "") === claimedOrigin) {
+      void chrome.runtime.sendMessage({ type: "FAILURE_NOTICE", tabId: sender.tab.id });
+    }
+    return false;
+  }
   const parsed = monitoringMessage.safeParse(untrusted);
   if (!parsed.success) {
     sendResponse({ error: "Invalid monitoring request" });
