@@ -1,9 +1,16 @@
-import { siteOrigin } from "@phantom/shared";
+import { interactionCountKey, siteOrigin } from "@phantom/shared";
 
 const site = document.querySelector<HTMLElement>("#site")!;
 const status = document.querySelector<HTMLElement>("#status")!;
 const monitor = document.querySelector<HTMLInputElement>("#monitor")!;
 let currentOrigin: string | null = null;
+
+async function showStatus(origin: string, enabled: boolean): Promise<void> {
+  if (!enabled) { status.textContent = "Monitoring is off for this site."; return; }
+  const key = interactionCountKey(origin);
+  const stored = await chrome.storage.local.get(key);
+  if (currentOrigin === origin) status.textContent = `Monitoring is on. ${Number(stored[key]) || 0} safe interactions observed.`;
+}
 
 async function refresh(): Promise<void> {
   monitor.disabled = true;
@@ -22,7 +29,7 @@ async function refresh(): Promise<void> {
     if (currentOrigin !== requestedOrigin) return;
     monitor.checked = response.enabled === true;
     monitor.disabled = false;
-    status.textContent = monitor.checked ? "Monitoring is on for this site." : "Monitoring is off for this site.";
+    await showStatus(requestedOrigin, monitor.checked);
   } catch {
     status.textContent = "Could not read monitoring settings.";
   }
@@ -36,7 +43,7 @@ monitor.addEventListener("change", async () => {
     const response = await chrome.runtime.sendMessage({ type: "SET_MONITORING", origin, enabled: monitor.checked });
     if (response.error) throw new Error(response.error);
     if (currentOrigin === origin) {
-      status.textContent = response.enabled ? "Monitoring is on for this site." : "Monitoring is off for this site.";
+      await showStatus(origin, response.enabled === true);
     }
   } catch {
     status.textContent = "Could not save monitoring settings.";
@@ -48,4 +55,7 @@ monitor.addEventListener("change", async () => {
 
 chrome.tabs.onActivated.addListener(() => { void refresh(); });
 chrome.tabs.onUpdated.addListener((_id, change) => { if (change.url) void refresh(); });
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && currentOrigin && changes[interactionCountKey(currentOrigin)]) void showStatus(currentOrigin, monitor.checked);
+});
 void refresh();
