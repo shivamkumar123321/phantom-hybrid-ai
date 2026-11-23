@@ -1,0 +1,14 @@
+{
+  "name": "@phantom/companion",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@phantom/shared": "0.1.0",
+    "firebase": "^11.0.0"
+  }
+}

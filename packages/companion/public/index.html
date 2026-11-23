@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>PHANTOM AI Companion</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>PHANTOM AI Companion</h1>
+        <p class="subtitle">Runs on-device and cloud diagnosis checks for the extension.</p>
+      </header>
+      <section class="card">
+        <h2>Connection &amp; AI Status</h2>
+        <p id="bridge-status" role="status" aria-live="polite">Waiting for extension connection…</p>
+        <p id="local-status">On-device AI: checking…</p>
+        <p id="cloud-status">Cloud AI: checking…</p>
+        <button id="enable-local" type="button">Enable On-Device AI</button>
+        <p id="download-status" aria-live="polite"></p>
+      </section>
+      <section class="card">
+        <h2>Recent AI Checks</h2>
+        <p id="last-route">No diagnosis requests yet.</p>
+      </section>
+    </main>
+    <script type="module" src="main.js"></script>
+  </body>
+</html>

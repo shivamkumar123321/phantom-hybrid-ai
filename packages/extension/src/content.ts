@@ -1,4 +1,4 @@
-import { monitoringKey, repairCommand, siteOrigin, type Diagnosis, type FailureKind, type FailureView, type PickerState, type RepairState } from "@phantom/shared";
+import { monitoringKey, repairCommand, sanitizeEvidence, siteOrigin, type Diagnosis, type EvidencePacket, type FailureKind, type FailureView, type PickerState, type RepairState } from "@phantom/shared";
 import { applyPointerEventsRepair, diagnoseBlockedButton, findBlockedButtonAtPoint, undoPointerEventsRepair, type PointerEventsSnapshot } from "./css-button";
 import { applyImageFallback, diagnoseBrokenImage, isFailedImage, isImageFallbackLoaded, knownImageFallback, restoreImageSource, type OriginalImageSource } from "./broken-image";
 import { applyFormButtonRepair, diagnoseFormButton, supportedFormButton, verifiesFormButton } from "./form-button";
@@ -210,6 +210,36 @@ function scanFailedImages(): void {
   }
 }
 
+function collectEvidence(current: Failure): EvidencePacket {
+  const attributeNames = ["href", "data-href", "data-route", "data-url", "src", "data-fallback-src", "data-src", "srcset", "type", "role", "aria-label", "data-phantom-submit"] as const;
+  const attributes: Record<string, string> = {};
+  for (const name of attributeNames) {
+    const value = current.target.getAttribute(name);
+    if (value !== null) attributes[name] = value;
+  }
+  if (current.kind === "css-button") attributes.pointerEvents = getComputedStyle(current.target).pointerEvents;
+  const hasFormOrUserText = current.kind === "form-button"
+    || Boolean(current.target.closest("form, [contenteditable='true']"))
+    || current.target instanceof HTMLInputElement
+    || current.target instanceof HTMLTextAreaElement
+    || current.target instanceof HTMLSelectElement;
+  const isField = current.target instanceof HTMLInputElement || current.target instanceof HTMLTextAreaElement || current.target instanceof HTMLSelectElement;
+  const label = isField ? "" : (current.target.textContent ?? "").trim().slice(0, 60);
+  const tag = current.target.tagName.toLowerCase();
+  return sanitizeEvidence({
+    origin: origin ?? location.origin,
+    kind: current.kind,
+    tagName: tag,
+    role: current.target.getAttribute("role"),
+    elementSummary: label ? `<${tag}> "${label}"` : `<${tag}>`,
+    attributes,
+    observedBehavior: current.diagnosis.reason,
+    hasFormOrUserText,
+    isComplex: current.kind === "manual",
+    relatedElementCount: current.target.parentElement ? Math.max(1, Math.min(50, current.target.parentElement.children.length)) : 1,
+  });
+}
+
 function applyRepair(current: Failure): string | null {
   if (current.state !== "preview" || current.diagnosis.action === "NO_SAFE_REPAIR") return "No safe repair is available";
   if (current.kind === "navigation") {
@@ -317,6 +347,19 @@ if (origin) {
     }
     if (!failure || !failure.target.isConnected) { sendResponse({ error: "No active failure" }); return false; }
     if (!enabled && parsed.data.type !== "UNDO_REPAIR") { sendResponse({ error: "Monitoring is off" }); return false; }
+    if (parsed.data.type === "GET_EVIDENCE") {
+      if (isSensitiveTarget(failure.target)) { sendResponse({ error: "Sensitive controls cannot be inspected or repaired." }); return false; }
+      sendResponse({ evidence: collectEvidence(failure), rulesFallback: failure.diagnosis });
+      return false;
+    }
+    if (parsed.data.type === "SET_DIAGNOSIS") {
+      failure.diagnosis = parsed.data.diagnosis;
+      failure.state = "preview";
+      outline(failure.target, "#7c3aed");
+      sendResponse(visibleState());
+      announce();
+      return false;
+    }
     if (parsed.data.type === "INVESTIGATE") failure.state = "preview";
     else {
       const error = parsed.data.type === "APPLY_REPAIR" ? applyRepair(failure) : undoRepair(failure);

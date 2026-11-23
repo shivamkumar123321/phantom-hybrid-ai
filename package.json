@@ -2,9 +2,11 @@
   "name": "phantom",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "build": "npm run build -w @phantom/extension && npm run build -w @phantom/demo",
+    "build": "npm run build -w @phantom/extension && npm run build -w @phantom/demo && npm run build -w @phantom/companion",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:e2e": "playwright test"
@@ -17,5 +19,8 @@
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
   },
-  "dependencies": { "zod": "^3.25.0" }
+  "dependencies": {
+    "firebase": "^13.4.0",
+    "zod": "^3.25.0"
+  }
 }

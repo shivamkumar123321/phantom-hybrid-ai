@@ -7,7 +7,10 @@ h1 { font-size: 1.5rem; margin-top: 0; }
 .switch input { width: 20px; height: 20px; }
 .note { line-height: 1.5; color: #68717d; }
 #failure { margin-top: 18px; padding: 15px; border: 1px solid #eab308; border-radius: 9px; }
-#failure h2 { font-size: 1.1rem; margin-top: 0; }
-#failure button, #picker-controls button { margin: 4px 6px 4px 0; padding: 8px 12px; cursor: pointer; }
+#failure h2, #cloud-confirm h2 { font-size: 1.1rem; margin-top: 0; }
+#failure button, #picker-controls button, #cloud-confirm button { margin: 4px 6px 4px 0; padding: 8px 12px; cursor: pointer; }
 #picker-controls { margin-top: 12px; }
-#picker-status { margin: 6px 0 0; color: #68717d; }
+#picker-status, #ai-status { margin: 6px 0 0; color: #68717d; }
+.consent-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
+.remember-row { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+#cloud-confirm { margin-top: 14px; padding: 14px; border: 1px solid #7c3aed; border-radius: 9px; }

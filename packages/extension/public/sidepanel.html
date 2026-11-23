@@ -7,11 +7,28 @@
       <p id="site">Checking this tab…</p>
       <label class="switch"><input id="monitor" type="checkbox" disabled><span>Monitor this site</span></label>
       <p id="status" role="status" aria-live="polite"></p>
+      <label class="consent-row" for="cloud-consent">
+        <span>Cloud AI permission</span>
+        <select id="cloud-consent" disabled>
+          <option value="ask">Ask each time</option>
+          <option value="granted">Allow for this site</option>
+          <option value="denied">Never for this site</option>
+        </select>
+      </label>
+      <p id="ai-status" role="status" aria-live="polite">AI status: checking…</p>
       <div id="picker-controls">
         <button id="pick" type="button" disabled>Something is broken</button>
         <button id="cancel-pick" type="button" hidden>Cancel picking</button>
         <p id="picker-status" role="status" aria-live="polite"></p>
       </div>
+      <section id="cloud-confirm" hidden aria-live="polite">
+        <h2>Allow Cloud AI check?</h2>
+        <p>PHANTOM will only send cleaned-up page details below. Passwords, tokens, cookies, and emails are removed.</p>
+        <p id="cloud-summary"></p>
+        <label class="remember-row"><input id="cloud-remember" type="checkbox"><span>Remember for this site</span></label>
+        <button id="cloud-approve" type="button">Ask Cloud AI</button>
+        <button id="cloud-decline" type="button">Use rules only</button>
+      </section>
       <section id="failure" hidden aria-live="polite">
         <h2>Suspected Failure</h2>
         <p id="failure-status"></p>
@@ -19,6 +36,7 @@
           <p id="reason"></p>
           <p id="confidence"></p>
           <p id="source"></p>
+          <p id="diagnosis-note"></p>
           <p id="action"></p>
           <p id="safety"></p>
         </div>

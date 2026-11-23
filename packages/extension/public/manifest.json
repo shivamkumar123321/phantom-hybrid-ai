@@ -8,5 +8,6 @@
   "background": { "service_worker": "background.js" },
   "side_panel": { "default_path": "sidepanel.html" },
   "action": { "default_title": "Open PHANTOM" },
+  "externally_connectable": { "matches": ["http://127.0.0.1:4174/*", "http://localhost:4174/*"] },
   "content_scripts": [{ "matches": ["http://*/*", "https://*/*"], "js": ["content.js"], "run_at": "document_idle" }]
 }

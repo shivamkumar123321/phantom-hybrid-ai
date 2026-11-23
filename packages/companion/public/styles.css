@@ -1,0 +1,9 @@
+:root { color-scheme: dark; font: 15px/1.5 system-ui, sans-serif; }
+body { margin: 0; background: #0b0d14; color: #e5e7eb; }
+main { max-width: 680px; margin: 0 auto; padding: 28px 20px; }
+h1 { margin: 0 0 4px; font-size: 1.5rem; color: #f8fafc; }
+h2 { margin-top: 0; font-size: 1.05rem; color: #c4b5fd; }
+.subtitle { margin: 0 0 20px; color: #94a3b8; }
+.card { background: #131726; border: 1px solid #2b324c; border-radius: 10px; padding: 18px; margin-bottom: 16px; }
+button { background: #7c3aed; color: #fff; border: 0; border-radius: 8px; padding: 10px 14px; font-weight: 600; cursor: pointer; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
