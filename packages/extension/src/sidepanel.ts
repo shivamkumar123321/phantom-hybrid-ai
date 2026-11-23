@@ -2,6 +2,8 @@ import {
   formatAiAvailability,
   interactionCountKey,
   isAllowedCompanionOrigin,
+  isEntryUndoable,
+  REPAIR_HISTORY_KEY,
   siteOrigin,
   type AiEnvironmentStatus,
   type CloudConsent,
@@ -10,6 +12,7 @@ import {
   type EvidencePacket,
   type FailureView,
   type PickerState,
+  type RepairHistoryEntry,
 } from "@phantom/shared";
 
 const site = document.querySelector<HTMLElement>("#site")!;
@@ -32,12 +35,15 @@ const diagnosisNote = document.querySelector<HTMLElement>("#diagnosis-note")!;
 const investigate = document.querySelector<HTMLButtonElement>("#investigate")!;
 const apply = document.querySelector<HTMLButtonElement>("#apply")!;
 const undo = document.querySelector<HTMLButtonElement>("#undo")!;
+const historyEmpty = document.querySelector<HTMLElement>("#history-empty")!;
+const historyList = document.querySelector<HTMLUListElement>("#history-list")!;
 
 let currentOrigin: string | null = null;
 let currentUrl: string | null = null;
 let currentTabId: number | null = null;
+let currentFailure: FailureView = null;
 let lastNote = "";
-let pendingConsent: { evidence: EvidencePacket; rulesFallback: Diagnosis } | null = null;
+let pendingConsent: { runId?: string; evidence: EvidencePacket; rulesFallback: Diagnosis } | null = null;
 
 function renderAiEnvironment(env: AiEnvironmentStatus, connected: boolean): void {
   const labels = formatAiAvailability(env);
@@ -46,6 +52,7 @@ function renderAiEnvironment(env: AiEnvironmentStatus, connected: boolean): void
 }
 
 function renderFailure(view: FailureView): void {
+  currentFailure = view;
   failureSection.hidden = !view || view.state === "undone";
   if (!view || view.state === "undone") { lastNote = ""; return; }
   if (view.state === "suspected") lastNote = "";
@@ -86,6 +93,51 @@ function renderPicker(state: PickerState | null): void {
   pickerStatus.textContent = state?.notice ?? "";
 }
 
+function renderHistory(entries: RepairHistoryEntry[]): void {
+  historyList.replaceChildren();
+  historyEmpty.hidden = entries.length > 0;
+  for (const entry of entries) {
+    const item = document.createElement("li");
+    item.className = "history-item";
+    const meta = document.createElement("p");
+    meta.textContent = `${entry.origin} · ${entry.bugType} · ${new Date(entry.timestamp).toLocaleTimeString()}`;
+    const summary = document.createElement("p");
+    summary.textContent = `Diagnosis: ${entry.diagnosisSummary}`;
+    const outcome = document.createElement("p");
+    outcome.textContent = `${entry.repairAction} · ${entry.source} · Verification Result: ${entry.verificationResult}`;
+    item.append(meta, summary, outcome);
+
+    const undoable = isEntryUndoable(entry, {
+      origin: currentOrigin,
+      activeRepairId: currentFailure?.repairId ?? null,
+      activeState: currentFailure?.state ?? null,
+    });
+    if (undoable) {
+      const undoButton = document.createElement("button");
+      undoButton.type = "button";
+      undoButton.className = "history-undo";
+      undoButton.textContent = "Undo";
+      undoButton.addEventListener("click", () => {
+        void sendTabCommand("UNDO_REPAIR", renderFailure, () => { failureStatus.textContent = "Could not complete that action. Try again."; });
+      });
+      item.append(undoButton);
+    } else {
+      const label = document.createElement("span");
+      label.className = "undo-unavailable";
+      label.textContent = entry.verificationResult === "undone" ? "Undone" : "Undo unavailable";
+      item.append(label);
+    }
+    historyList.append(item);
+  }
+}
+
+async function refreshHistory(): Promise<void> {
+  try {
+    const res = await chrome.runtime.sendMessage({ type: "GET_REPAIR_HISTORY" }) as { history?: RepairHistoryEntry[] };
+    renderHistory(res.history ?? []);
+  } catch { renderHistory([]); }
+}
+
 async function queryTabState<T>(type: "GET_FAILURE" | "GET_PICKER_STATE", applyState: (value: T | null) => void): Promise<void> {
   const tabId = currentTabId;
   if (tabId === null) { applyState(null); return; }
@@ -101,16 +153,20 @@ async function sendTabCommand<T>(type: "APPLY_REPAIR" | "UNDO_REPAIR" | "START_P
     const result = await chrome.tabs.sendMessage(currentTabId, { type });
     if (result?.error) throw new Error(result.error);
     applyState(result as T);
+    if (type === "APPLY_REPAIR" || type === "UNDO_REPAIR") void refreshHistory();
   } catch { onError(); }
 }
 
-const refreshFailure = () => queryTabState<FailureView>("GET_FAILURE", renderFailure);
+const refreshFailure = async () => {
+  await queryTabState<FailureView>("GET_FAILURE", renderFailure);
+  await refreshHistory();
+};
 const refreshPicker = () => queryTabState<PickerState>("GET_PICKER_STATE", renderPicker);
 
 async function runInvestigation(
   evidence: EvidencePacket,
   rulesFallback: Diagnosis,
-  options: { overrideConsent?: CloudConsent; cloudDecision?: "approved" | "declined" } = {},
+  options: { runId?: string; overrideConsent?: CloudConsent; cloudDecision?: "approved" | "declined" } = {},
 ): Promise<void> {
   const tabId = currentTabId;
   const tabUrl = currentUrl;
@@ -119,6 +175,7 @@ async function runInvestigation(
   try {
     const response = await chrome.runtime.sendMessage({
       type: "RUN_DIAGNOSIS",
+      runId: options.runId,
       tabId,
       tabUrl,
       evidence,
@@ -130,7 +187,7 @@ async function runInvestigation(
     if (response.error || !response.outcome) throw new Error(response.error ?? "Diagnosis failed");
     renderAiEnvironment(response.outcome.env, response.companionConnected === true);
     if (response.outcome.status === "needs-cloud-consent") {
-      pendingConsent = { evidence: response.outcome.sanitizedEvidence, rulesFallback };
+      pendingConsent = { runId: options.runId, evidence: response.outcome.sanitizedEvidence, rulesFallback };
       cloudSummary.textContent = response.outcome.summary;
       cloudRemember.checked = false;
       cloudConfirm.hidden = false;
@@ -156,10 +213,11 @@ investigate.addEventListener("click", () => {
       const payload = await chrome.tabs.sendMessage(currentTabId, { type: "GET_EVIDENCE" }) as {
         evidence?: EvidencePacket;
         rulesFallback?: Diagnosis;
+        runId?: string;
         error?: string;
       };
       if (payload.error || !payload.evidence || !payload.rulesFallback) throw new Error(payload.error ?? "No evidence");
-      await runInvestigation(payload.evidence, payload.rulesFallback);
+      await runInvestigation(payload.evidence, payload.rulesFallback, { runId: payload.runId });
     } catch {
       failureStatus.textContent = "Could not complete that action. Try again.";
     }
@@ -168,13 +226,13 @@ investigate.addEventListener("click", () => {
 
 async function handleCloudDecision(decision: "approved" | "declined"): Promise<void> {
   if (!pendingConsent) return;
-  const { evidence, rulesFallback } = pendingConsent;
+  const { runId, evidence, rulesFallback } = pendingConsent;
   const consent: CloudConsent = decision === "approved" ? "granted" : "denied";
   if (cloudRemember.checked && currentOrigin) {
     await chrome.runtime.sendMessage({ type: "SET_CLOUD_CONSENT", origin: currentOrigin, consent }).catch(() => {});
     cloudConsentSelect.value = consent;
   }
-  await runInvestigation(evidence, rulesFallback, { overrideConsent: consent, cloudDecision: decision });
+  await runInvestigation(evidence, rulesFallback, { runId, overrideConsent: consent, cloudDecision: decision });
 }
 
 cloudApprove.addEventListener("click", () => { void handleCloudDecision("approved"); });
@@ -213,6 +271,7 @@ async function refresh(): Promise<void> {
     monitor.checked = false;
     renderPicker(null);
     renderFailure(null);
+    await refreshHistory();
     return;
   }
   const requestedOrigin = currentOrigin;
@@ -267,11 +326,15 @@ chrome.tabs.onActivated.addListener(() => { void refresh(); });
 chrome.tabs.onUpdated.addListener((_id, change) => { if (change.url) void refresh(); });
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && currentOrigin && changes[interactionCountKey(currentOrigin)]) void showStatus(currentOrigin, monitor.checked);
+  if (area === "local" && changes[REPAIR_HISTORY_KEY]) void refreshHistory();
 });
 chrome.runtime.onMessage.addListener((message: unknown) => {
-  if (typeof message === "object" && message !== null && "type" in message && message.type === "FAILURE_NOTICE" && "tabId" in message && message.tabId === currentTabId) {
+  if (typeof message !== "object" || message === null || !("type" in message)) return;
+  if (message.type === "FAILURE_NOTICE" && "tabId" in message && message.tabId === currentTabId) {
     void refreshFailure();
     void refreshPicker();
+  } else if (message.type === "HISTORY_UPDATED") {
+    void refreshHistory();
   }
 });
 void refresh();

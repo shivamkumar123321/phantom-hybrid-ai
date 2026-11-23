@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+export const failureKind = z.enum(["navigation", "css-button", "image", "form-button", "manual"]);
+export type FailureKind = z.infer<typeof failureKind>;
+
 export const repairAction = z.enum([
   "RESTORE_NAVIGATION",
   "RESTORE_POINTER_EVENTS",
@@ -19,6 +22,5 @@ export const diagnosis = z.object({
 
 export type Diagnosis = z.infer<typeof diagnosis>;
 export type RepairState = "suspected" | "preview" | "pending" | "verified" | "undone";
-export type FailureKind = "navigation" | "css-button" | "image" | "form-button" | "manual";
-export type FailureView = { kind: FailureKind; state: RepairState; diagnosis: Diagnosis | null } | null;
+export type FailureView = { kind: FailureKind; state: RepairState; diagnosis: Diagnosis | null; repairId?: string | null } | null;
 export type PickerState = { active: boolean; notice: string | null };

@@ -14,3 +14,10 @@ h1 { font-size: 1.5rem; margin-top: 0; }
 .consent-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
 .remember-row { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
 #cloud-confirm { margin-top: 14px; padding: 14px; border: 1px solid #7c3aed; border-radius: 9px; }
+#history { margin-top: 18px; padding: 15px; border: 1px solid #475569; border-radius: 9px; }
+#history h2 { font-size: 1.1rem; margin-top: 0; }
+#history-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.history-item { padding: 10px; border: 1px solid #334155; border-radius: 8px; }
+.history-item p { margin: 2px 0; font-size: 0.9rem; }
+.history-undo { margin-top: 6px; padding: 6px 10px; cursor: pointer; }
+.undo-unavailable { display: inline-block; margin-top: 6px; color: #68717d; font-size: 0.85rem; }

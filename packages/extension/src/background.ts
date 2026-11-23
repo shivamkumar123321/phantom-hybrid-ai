@@ -6,13 +6,20 @@ import {
   isAllowedCompanionOrigin,
   monitoringKey,
   monitoringMessage,
+  outcomeToPipelineEvents,
+  REPAIR_HISTORY_KEY,
+  repairHistoryEntry,
   resolveDiagnosisOutcome,
   sanitizeEvidence,
   siteOrigin,
   UNAVAILABLE_AI_ENV,
+  updateHistoryVerification,
+  upsertHistoryEntry,
   type CloudConsent,
   type CompanionRequest,
   type CompanionResponse,
+  type PipelineEvent,
+  type RepairHistoryEntry,
 } from "@phantom/shared";
 
 let companionPort: chrome.runtime.Port | null = null;
@@ -21,6 +28,7 @@ let connectAttempt: Promise<chrome.runtime.Port | null> | null = null;
 const connectWaiters: Array<(port: chrome.runtime.Port | null) => void> = [];
 const pendingRequests = new Map<string, { resolve: (res: CompanionResponse | null) => void; timer: ReturnType<typeof setTimeout> }>();
 const activeTabUrls = new Map<number, string>();
+let recentPipelineEvents: PipelineEvent[] = [];
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.url) activeTabUrls.set(tabId, changeInfo.url);
@@ -55,6 +63,30 @@ async function getCloudConsent(origin: string): Promise<CloudConsent> {
   return value === "granted" || value === "denied" ? value : "ask";
 }
 
+async function readRepairHistory(): Promise<RepairHistoryEntry[]> {
+  const stored = await chrome.storage.local.get(REPAIR_HISTORY_KEY);
+  const parsed = repairHistoryEntry.array().safeParse(stored[REPAIR_HISTORY_KEY]);
+  return parsed.success ? parsed.data : [];
+}
+
+async function writeRepairHistory(entries: RepairHistoryEntry[]): Promise<RepairHistoryEntry[]> {
+  await chrome.storage.local.set({ [REPAIR_HISTORY_KEY]: entries });
+  void chrome.runtime.sendMessage({ type: "HISTORY_UPDATED" }).catch(() => {});
+  return entries;
+}
+
+function forwardPipelineEvent(port: chrome.runtime.Port, event: PipelineEvent): void {
+  port.postMessage({ id: crypto.randomUUID(), type: "PIPELINE_EVENT", event } satisfies CompanionRequest);
+}
+
+function pushPipelineEvent(event: PipelineEvent): void {
+  recentPipelineEvents = [...recentPipelineEvents, event].slice(-30);
+  if (!companionPort) return;
+  try {
+    forwardPipelineEvent(companionPort, event);
+  } catch { /* Port may have closed; buffered events replay on reconnect. */ }
+}
+
 function flushConnectWaiters(port: chrome.runtime.Port | null): void {
   while (connectWaiters.length > 0) connectWaiters.shift()?.(port);
 }
@@ -67,6 +99,11 @@ chrome.runtime.onConnectExternal.addListener((port) => {
   }
   companionPort = port;
   companionTabId = port.sender?.tab?.id ?? null;
+  for (const event of recentPipelineEvents) {
+    try {
+      forwardPipelineEvent(port, event);
+    } catch { break; }
+  }
   flushConnectWaiters(port);
 
   port.onMessage.addListener((untrusted: unknown) => {
@@ -207,6 +244,34 @@ chrome.runtime.onMessage.addListener((untrusted: unknown, sender, sendResponse) 
     chrome.storage.local.set({ [cloudConsentKey(message.origin)]: message.consent }).then(() => sendResponse({ consent: message.consent }), () => sendResponse({ error: "Storage unavailable" }));
     return true;
   }
+  if (message.type === "GET_REPAIR_HISTORY") {
+    readRepairHistory().then((history) => sendResponse({ history }), () => sendResponse({ history: [] }));
+    return true;
+  }
+  if (message.type === "RECORD_REPAIR_HISTORY") {
+    void (async () => {
+      if (siteOrigin(sender.tab?.url ?? "") !== message.entry.origin) { sendResponse({ error: "Wrong site" }); return; }
+      const updated = upsertHistoryEntry(await readRepairHistory(), message.entry);
+      sendResponse({ history: await writeRepairHistory(updated) });
+    })();
+    return true;
+  }
+  if (message.type === "UPDATE_REPAIR_HISTORY") {
+    void (async () => {
+      const updated = updateHistoryVerification(await readRepairHistory(), message.id, message.verificationResult);
+      sendResponse({ history: await writeRepairHistory(updated) });
+    })();
+    return true;
+  }
+  if (message.type === "REPORT_PIPELINE_EVENT") {
+    if (sender.tab?.url && siteOrigin(sender.tab.url) !== message.event.origin) {
+      sendResponse({ error: "Wrong site" });
+      return false;
+    }
+    pushPipelineEvent(message.event);
+    sendResponse({ received: true });
+    return false;
+  }
   if (message.type === "GET_COMPANION_STATUS") {
     void (async () => {
       const port = await ensureCompanionPort(false);
@@ -229,6 +294,7 @@ chrome.runtime.onMessage.addListener((untrusted: unknown, sender, sendResponse) 
         const reply = await sendCompanionRequest(port, {
           id: crypto.randomUUID(),
           type: "DIAGNOSE_REQUEST",
+          runId: message.runId,
           evidence: safeEvidence,
           rulesFallback: message.rulesFallback,
           cloudConsent: effectiveConsent,
@@ -236,6 +302,11 @@ chrome.runtime.onMessage.addListener((untrusted: unknown, sender, sendResponse) 
         });
         if (!await isTabCurrent(message.tabId, message.tabUrl)) { sendResponse({ stale: true }); return; }
         if (reply?.type === "DIAGNOSE_RESPONSE") {
+          if (message.runId) {
+            for (const event of outcomeToPipelineEvents(message.runId, safeEvidence.origin, reply.outcome)) {
+              recentPipelineEvents = [...recentPipelineEvents, event].slice(-30);
+            }
+          }
           sendResponse({ outcome: reply.outcome, companionConnected: true });
           return;
         }
@@ -248,6 +319,9 @@ chrome.runtime.onMessage.addListener((untrusted: unknown, sender, sendResponse) 
         cloudDecision: message.cloudDecision,
         runModel: async () => { throw new Error("Companion unavailable"); },
       });
+      if (message.runId) {
+        for (const event of outcomeToPipelineEvents(message.runId, safeEvidence.origin, outcome)) pushPipelineEvent(event);
+      }
       sendResponse({ outcome, companionConnected: false });
     })();
     return true;

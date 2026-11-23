@@ -1,12 +1,16 @@
 import { z } from "zod";
 import { cloudConsent } from "./ai-routing";
 import { diagnosis } from "./contracts";
+import { repairHistoryEntry, verificationResult } from "./history";
+import { pipelineEvent } from "./pipeline";
 import { evidencePacket } from "./sanitize";
 
 export * from "./contracts";
 export * from "./sanitize";
 export * from "./ai-routing";
 export * from "./bridge";
+export * from "./history";
+export * from "./pipeline";
 
 export const monitoringMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("GET_MONITORING"), origin: z.string().url() }),
@@ -17,6 +21,7 @@ export const monitoringMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("GET_COMPANION_STATUS") }),
   z.object({
     type: z.literal("RUN_DIAGNOSIS"),
+    runId: z.string().min(1).optional(),
     tabId: z.number().int().nonnegative().optional(),
     tabUrl: z.string().url().optional(),
     evidence: evidencePacket,
@@ -24,6 +29,14 @@ export const monitoringMessage = z.discriminatedUnion("type", [
     overrideConsent: cloudConsent.optional(),
     cloudDecision: z.enum(["approved", "declined"]).optional(),
   }),
+  z.object({ type: z.literal("GET_REPAIR_HISTORY") }),
+  z.object({ type: z.literal("RECORD_REPAIR_HISTORY"), entry: repairHistoryEntry }),
+  z.object({
+    type: z.literal("UPDATE_REPAIR_HISTORY"),
+    id: z.string().min(1),
+    verificationResult,
+  }),
+  z.object({ type: z.literal("REPORT_PIPELINE_EVENT"), event: pipelineEvent }),
 ]);
 
 export type MonitoringMessage = z.infer<typeof monitoringMessage>;

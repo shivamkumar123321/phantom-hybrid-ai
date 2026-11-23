@@ -6,7 +6,7 @@
 
 **Status:** ready-for-agent
 
-- [ ] The pipeline view updates from actual run events and shows the selected route, actual AI source, and each completed stage.
-- [ ] The routing view distinguishes on-device, cloud, and rules-only outcomes, including unavailable-model and consent states.
-- [ ] The view remains useful for a rules-only run and does not display sensitive page data.
-- [ ] A browser test checks that a real demo run appears accurately in the view.
+- [x] The pipeline view updates from actual run events and shows the selected route, actual AI source, and each completed stage.
+- [x] The routing view distinguishes on-device, cloud, and rules-only outcomes, including unavailable-model and consent states.
+- [x] The view remains useful for a rules-only run and does not display sensitive page data.
+- [x] A browser test checks that a real demo run appears accurately in the view.

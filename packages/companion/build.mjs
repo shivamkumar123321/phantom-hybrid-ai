@@ -6,10 +6,11 @@ import { fileURLToPath } from "node:url";
 const root = dirname(fileURLToPath(import.meta.url));
 await mkdir(join(root, "dist"), { recursive: true });
 await build({
-  entryPoints: [join(root, "src", "main.ts")],
+  entryPoints: [join(root, "src", "main.tsx")],
   outfile: join(root, "dist", "main.js"),
   bundle: true,
   format: "esm",
+  jsx: "automatic",
   target: "chrome120",
   minify: false,
   define: {
@@ -20,6 +21,7 @@ await build({
     "process.env.VITE_RECAPTCHA_SITE_KEY": JSON.stringify(process.env.VITE_RECAPTCHA_SITE_KEY ?? ""),
   },
 });
+await copyFile(join(root, "..", "..", "node_modules", "@xyflow", "react", "dist", "style.css"), join(root, "dist", "xyflow.css"));
 for (const name of ["index.html", "styles.css"]) {
   await copyFile(join(root, "public", name), join(root, "dist", name));
 }

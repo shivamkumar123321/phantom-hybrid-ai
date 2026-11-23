@@ -1,4 +1,20 @@
-import { monitoringKey, repairCommand, sanitizeEvidence, siteOrigin, type Diagnosis, type EvidencePacket, type FailureKind, type FailureView, type PickerState, type RepairState } from "@phantom/shared";
+import {
+  createHistoryEntry,
+  createPipelineEvent,
+  monitoringKey,
+  repairCommand,
+  sanitizeEvidence,
+  siteOrigin,
+  type Diagnosis,
+  type EvidencePacket,
+  type FailureKind,
+  type FailureView,
+  type InferenceSourceName,
+  type PickerState,
+  type PipelineRoute,
+  type PipelineStage,
+  type RepairState,
+} from "@phantom/shared";
 import { applyPointerEventsRepair, diagnoseBlockedButton, findBlockedButtonAtPoint, undoPointerEventsRepair, type PointerEventsSnapshot } from "./css-button";
 import { applyImageFallback, diagnoseBrokenImage, isFailedImage, isImageFallbackLoaded, knownImageFallback, restoreImageSource, type OriginalImageSource } from "./broken-image";
 import { applyFormButtonRepair, diagnoseFormButton, supportedFormButton, verifiesFormButton } from "./form-button";
@@ -7,6 +23,7 @@ import { diagnoseNavigation, hasBrokenDestination, knownDestination } from "./na
 import { isSensitiveTarget } from "./sensitive";
 
 type Failure = {
+  runId: string; repairId?: string;
   kind: FailureKind; target: HTMLElement; diagnosis: Diagnosis; state: RepairState;
   originalOutline: string; originalOutlineOffset: string;
   originalHref?: string | null; originalUrl?: string;
@@ -29,8 +46,26 @@ function pickerState(): PickerState {
 }
 
 function visibleState(): FailureView {
-  if (!failure) return null;
-  return { kind: failure.kind, state: failure.state, diagnosis: failure.state === "suspected" ? null : failure.diagnosis };
+  if (!failure || !failure.target.isConnected) return null;
+  return {
+    kind: failure.kind,
+    state: failure.state,
+    diagnosis: failure.state === "suspected" ? null : failure.diagnosis,
+    repairId: failure.repairId ?? null,
+  };
+}
+
+function emitPipeline(
+  current: Pick<Failure, "runId">,
+  stage: PipelineStage,
+  status: "done" | "waiting",
+  detail: string,
+  source: InferenceSourceName | null = null,
+  route: PipelineRoute | null = null,
+): void {
+  if (!origin) return;
+  const event = createPipelineEvent({ runId: current.runId, origin, stage, status, detail, route, source });
+  void chrome.runtime.sendMessage({ type: "REPORT_PIPELINE_EVENT", event }).catch(() => {});
 }
 
 function announce(): void {
@@ -92,8 +127,9 @@ function suspect(kind: FailureKind, target: HTMLElement, diagnosis: Diagnosis): 
   if (failure?.state === "pending" || failure?.state === "verified") return;
   if (failure?.target === target && failure.state !== "undone") return;
   if (failure) restoreOutline(failure);
-  failure = { kind, target, diagnosis, state: "suspected", originalOutline: target.style.outline, originalOutlineOffset: target.style.outlineOffset };
+  failure = { runId: crypto.randomUUID(), kind, target, diagnosis, state: "suspected", originalOutline: target.style.outline, originalOutlineOffset: target.style.outlineOffset };
   outline(target, "#eab308");
+  emitPipeline(failure, "detection", "done", `Suspected ${kind} failure detected`);
   announce();
 }
 
@@ -155,6 +191,7 @@ function observeClick(event: MouseEvent): void {
     const preserved = savedOutline(inspected.target);
     if (failure && failure.target !== inspected.target) restoreOutline(failure);
     failure = {
+      runId: crypto.randomUUID(),
       kind: inspected.kind,
       target: inspected.target,
       diagnosis: inspected.diagnosis,
@@ -162,6 +199,10 @@ function observeClick(event: MouseEvent): void {
       ...preserved,
     };
     outline(inspected.target, "#7c3aed");
+    emitPipeline(failure, "detection", "done", `Manually picked ${inspected.kind} element`);
+    emitPipeline(failure, "evidence", "done", "Sanitized page metadata ready");
+    emitPipeline(failure, "routing", "done", "Rules-only local pick", inspected.diagnosis.source, "RULES_ONLY");
+    emitPipeline(failure, "diagnosis", "done", inspected.diagnosis.action, inspected.diagnosis.source, "RULES_ONLY");
     announce();
     return;
   }
@@ -184,6 +225,11 @@ function verify(): void {
   failure.state = "verified";
   awaitingInteraction = false;
   outline(failure.target, "#16a34a");
+  if (failure.repairId) {
+    void chrome.runtime.sendMessage({ type: "UPDATE_REPAIR_HISTORY", id: failure.repairId, verificationResult: "verified" }).catch(() => {});
+  }
+  emitPipeline(failure, "verification", "done", "Verification Result: behavior restored", failure.diagnosis.source);
+  emitPipeline(failure, "history", "done", "History updated: verified", failure.diagnosis.source);
   announce();
 }
 
@@ -261,7 +307,25 @@ function applyRepair(current: Failure): string | null {
     if (!current.formUndo) return "Form is not safe to repair";
   }
   current.state = "pending";
+  current.repairId = crypto.randomUUID();
   outline(current.target, "#eab308");
+  if (origin) {
+    const entry = createHistoryEntry({
+      id: current.repairId,
+      origin,
+      bugType: current.kind,
+      timestamp: new Date().toISOString(),
+      diagnosisSummary: current.diagnosis.reason,
+      repairAction: current.diagnosis.action,
+      source: current.diagnosis.source,
+      verificationResult: "pending",
+    });
+    void chrome.runtime.sendMessage({ type: "RECORD_REPAIR_HISTORY", entry }).catch(() => {});
+  }
+  emitPipeline(current, "approval", "done", "User approved repair", current.diagnosis.source);
+  emitPipeline(current, "repair", "done", `Applied ${current.diagnosis.action}`, current.diagnosis.source);
+  emitPipeline(current, "verification", "waiting", "Waiting for Verification Result", current.diagnosis.source);
+  emitPipeline(current, "history", "done", "Saved repair to local history", current.diagnosis.source);
   return null;
 }
 
@@ -281,6 +345,11 @@ function undoRepair(current: Failure): string | null {
   restoreOutline(current);
   current.state = "undone";
   awaitingInteraction = false;
+  if (current.repairId) {
+    void chrome.runtime.sendMessage({ type: "UPDATE_REPAIR_HISTORY", id: current.repairId, verificationResult: "undone" }).catch(() => {});
+  }
+  emitPipeline(current, "verification", "done", "Repair undone by user", current.diagnosis.source);
+  emitPipeline(current, "history", "done", "History updated: undone", current.diagnosis.source);
   return null;
 }
 
@@ -349,7 +418,7 @@ if (origin) {
     if (!enabled && parsed.data.type !== "UNDO_REPAIR") { sendResponse({ error: "Monitoring is off" }); return false; }
     if (parsed.data.type === "GET_EVIDENCE") {
       if (isSensitiveTarget(failure.target)) { sendResponse({ error: "Sensitive controls cannot be inspected or repaired." }); return false; }
-      sendResponse({ evidence: collectEvidence(failure), rulesFallback: failure.diagnosis });
+      sendResponse({ evidence: collectEvidence(failure), rulesFallback: failure.diagnosis, runId: failure.runId });
       return false;
     }
     if (parsed.data.type === "SET_DIAGNOSIS") {

@@ -28,7 +28,10 @@ export function formatAiAvailability(env: AiEnvironmentStatus): { local: string;
 export const cloudConsent = z.enum(["ask", "granted", "denied"]);
 export type CloudConsent = z.infer<typeof cloudConsent>;
 
-export type InferenceModeName = "ONLY_ON_DEVICE" | "PREFER_ON_DEVICE" | "ONLY_IN_CLOUD";
+export const inferenceModeName = z.enum(["ONLY_ON_DEVICE", "PREFER_ON_DEVICE", "ONLY_IN_CLOUD"]);
+export type InferenceModeName = z.infer<typeof inferenceModeName>;
+export const selectedRouteName = z.enum(["ONLY_ON_DEVICE", "PREFER_ON_DEVICE", "ONLY_IN_CLOUD", "RULES_ONLY"]);
+export type SelectedRouteName = z.infer<typeof selectedRouteName>;
 
 export type RoutingDecision =
   | { kind: "model"; mode: InferenceModeName }
@@ -39,6 +42,7 @@ export const diagnosisOutcome = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("diagnosed"),
     diagnosis,
+    selectedRoute: selectedRouteName,
     env: aiEnvironmentStatus,
     note: z.string(),
   }),
@@ -142,9 +146,10 @@ export async function resolveDiagnosisOutcome(input: {
   runModel: ModelRunner;
 }): Promise<DiagnosisOutcome> {
   const safeEvidence = sanitizeEvidence(input.evidence);
-  const rulesResult = (note: string): DiagnosisOutcome => ({
+  const rulesResult = (note: string, selectedRoute: SelectedRouteName = "RULES_ONLY"): DiagnosisOutcome => ({
     status: "diagnosed",
     diagnosis: { ...input.rulesFallback, source: "rules-only" },
+    selectedRoute,
     env: input.env,
     note,
   });
@@ -160,7 +165,7 @@ export async function resolveDiagnosisOutcome(input: {
   try {
     const first = await input.runModel(route.mode, safeEvidence);
     const parsed = validateAiDiagnosis(first.rawText, first.inferenceSource);
-    if (!parsed) return rulesResult("AI output failed safety validation; using rules-only fallback.");
+    if (!parsed) return rulesResult("AI output failed safety validation; using rules-only fallback.", route.mode);
 
     if (parsed.source === "on-device" && parsed.confidence < 0.7 && !isFormRestricted(safeEvidence)) {
       const escalation = decideAiRoute({
@@ -175,20 +180,27 @@ export async function resolveDiagnosisOutcome(input: {
           const cloudRun = await input.runModel(escalation.mode, safeEvidence);
           const cloudParsed = validateAiDiagnosis(cloudRun.rawText, cloudRun.inferenceSource);
           if (cloudParsed) {
-            return { status: "diagnosed", diagnosis: cloudParsed, env: input.env, note: "Diagnosed by Cloud AI after low on-device confidence." };
+            return {
+              status: "diagnosed",
+              diagnosis: cloudParsed,
+              selectedRoute: escalation.mode,
+              env: input.env,
+              note: "Diagnosed by Cloud AI after low on-device confidence.",
+            };
           }
         } catch {
-          return rulesResult("Cloud AI failed after low on-device confidence; using rules-only fallback.");
+          return rulesResult("Cloud AI failed after low on-device confidence; using rules-only fallback.", escalation.mode);
         }
       }
     }
     return {
       status: "diagnosed",
       diagnosis: parsed,
+      selectedRoute: route.mode,
       env: input.env,
       note: parsed.source === "on-device" ? "Diagnosed privately on your device." : "Diagnosed by Cloud AI using sanitized page details.",
     };
   } catch {
-    return rulesResult("AI check could not complete; using rules-only fallback.");
+    return rulesResult("AI check could not complete; using rules-only fallback.", route.mode);
   }
 }
