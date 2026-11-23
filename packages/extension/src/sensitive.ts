@@ -1,4 +1,5 @@
-const sensitiveWords = /(?:^|[^a-z])(?:password|passcode|payment|pay|checkout|billing|bank|card|credit|cvv|cvc|expiry|exp-date|security|login|log[ -]?in|sign[ -]?in|authentication|auth|otp|one-time|verification|2fa|mfa)(?=$|[^a-z])/i;
+import { SENSITIVE_CONTROL_WORDS } from "@phantom/shared";
+
 const sensitiveAutocomplete = /^(?:current-password|new-password|one-time-code|cc-|webauthn)/i;
 
 function describesSensitiveControl(element: Element): boolean {
@@ -6,11 +7,11 @@ function describesSensitiveControl(element: Element): boolean {
   if (attributes.some((name) => {
     const value = element.getAttribute(name);
     const words = value?.replace(/([a-z])([A-Z])/g, "$1 $2");
-    return words !== undefined && (sensitiveWords.test(words) || (name === "autocomplete" && sensitiveAutocomplete.test(words)));
+    return words !== undefined && (SENSITIVE_CONTROL_WORDS.test(words) || (name === "autocomplete" && sensitiveAutocomplete.test(words)));
   })) return true;
-  if (element instanceof HTMLButtonElement && sensitiveWords.test(element.textContent ?? "")) return true;
+  if (element instanceof HTMLButtonElement && SENSITIVE_CONTROL_WORDS.test(element.textContent ?? "")) return true;
   if (element instanceof HTMLAnchorElement) {
-    return sensitiveWords.test(element.textContent ?? "") || sensitiveWords.test(element.getAttribute("href") ?? "");
+    return SENSITIVE_CONTROL_WORDS.test(element.textContent ?? "") || SENSITIVE_CONTROL_WORDS.test(element.getAttribute("href") ?? "");
   }
   return false;
 }
@@ -22,8 +23,8 @@ export function isSensitiveTarget(target: EventTarget | null): boolean {
     if (describesSensitiveControl(current)) return true;
     if (current instanceof HTMLFormElement) {
       if ([...current.querySelectorAll("input, button, select, textarea")].some(describesSensitiveControl)) return true;
-      if ([...current.querySelectorAll("button")].some((button) => sensitiveWords.test(button.textContent ?? ""))) return true;
-      if (sensitiveWords.test(current.getAttribute("action") ?? "")) return true;
+      if ([...current.querySelectorAll("button")].some((button) => SENSITIVE_CONTROL_WORDS.test(button.textContent ?? ""))) return true;
+      if (SENSITIVE_CONTROL_WORDS.test(current.getAttribute("action") ?? "")) return true;
     }
   }
   return false;

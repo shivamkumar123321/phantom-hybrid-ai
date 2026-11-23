@@ -1,4 +1,6 @@
 import {
+  communityRecipesKey,
+  filterValidRecipes,
   formatAiAvailability,
   interactionCountKey,
   isAllowedCompanionOrigin,
@@ -13,6 +15,7 @@ import {
   type FailureView,
   type PickerState,
   type RepairHistoryEntry,
+  type RepairRecipe,
 } from "@phantom/shared";
 
 const site = document.querySelector<HTMLElement>("#site")!;
@@ -35,6 +38,11 @@ const diagnosisNote = document.querySelector<HTMLElement>("#diagnosis-note")!;
 const investigate = document.querySelector<HTMLButtonElement>("#investigate")!;
 const apply = document.querySelector<HTMLButtonElement>("#apply")!;
 const undo = document.querySelector<HTMLButtonElement>("#undo")!;
+const shareRecipe = document.querySelector<HTMLButtonElement>("#share-recipe")!;
+const shareStatus = document.querySelector<HTMLElement>("#share-status")!;
+const communityStatus = document.querySelector<HTMLElement>("#community-status")!;
+const communityEmpty = document.querySelector<HTMLElement>("#community-empty")!;
+const communityList = document.querySelector<HTMLUListElement>("#community-list")!;
 const historyEmpty = document.querySelector<HTMLElement>("#history-empty")!;
 const historyList = document.querySelector<HTMLUListElement>("#history-list")!;
 
@@ -54,8 +62,16 @@ function renderAiEnvironment(env: AiEnvironmentStatus, connected: boolean): void
 function renderFailure(view: FailureView): void {
   currentFailure = view;
   failureSection.hidden = !view || view.state === "undone";
-  if (!view || view.state === "undone") { lastNote = ""; return; }
-  if (view.state === "suspected") lastNote = "";
+  if (!view || view.state === "undone") {
+    lastNote = "";
+    shareStatus.textContent = "";
+    shareRecipe.hidden = true;
+    return;
+  }
+  if (view.state === "suspected") {
+    lastNote = "";
+    shareStatus.textContent = "";
+  }
   const names = { navigation: "link", "css-button": "button", image: "image", "form-button": "form button", manual: "element" };
   const pending: Partial<Record<typeof view.kind, string>> = { navigation: "Click the link to verify navigation.", "css-button": "Click the button to verify its action.", image: "Waiting for the backup image to load.", "form-button": "Click the form button to verify submission." };
   const verified: Partial<Record<typeof view.kind, string>> = { navigation: "navigation worked.", "css-button": "the button action worked.", image: "the backup image loaded.", "form-button": "the form handled submission." };
@@ -74,6 +90,7 @@ function renderFailure(view: FailureView): void {
   diagnosisSection.hidden = !view.diagnosis;
   apply.hidden = view.state !== "preview" || !view.diagnosis || view.diagnosis.action === "NO_SAFE_REPAIR";
   undo.hidden = view.state !== "pending" && view.state !== "verified";
+  shareRecipe.hidden = view.fromCommunity === true || view.state !== "verified" || !view.diagnosis || view.diagnosis.action === "NO_SAFE_REPAIR";
   if (view.diagnosis) {
     document.querySelector<HTMLElement>("#reason")!.textContent = `What went wrong: ${view.diagnosis.reason}`;
     document.querySelector<HTMLElement>("#confidence")!.textContent = `Confidence: ${Math.round(view.diagnosis.confidence * 100)}%`;
@@ -91,6 +108,52 @@ function renderPicker(state: PickerState | null): void {
   pick.disabled = !monitor.checked || !currentOrigin;
   cancelPick.hidden = !active;
   pickerStatus.textContent = state?.notice ?? "";
+}
+
+function renderCommunity(recipes: RepairRecipe[]): void {
+  communityList.replaceChildren();
+  const valid = filterValidRecipes(recipes, currentOrigin ?? undefined);
+  communityEmpty.hidden = valid.length > 0;
+  for (const recipe of valid) {
+    const item = document.createElement("li");
+    item.className = "community-item";
+    const heading = document.createElement("p");
+    heading.textContent = `${recipe.repairAction} (${recipe.elementTag} · ${recipe.selectorHint})`;
+    const summary = document.createElement("p");
+    summary.textContent = recipe.summary;
+    const safety = document.createElement("p");
+    safety.textContent = `Safety: ${recipe.safetyNote}`;
+    const approveButton = document.createElement("button");
+    approveButton.type = "button";
+    approveButton.className = "community-apply";
+    approveButton.textContent = "Approve & Apply";
+    approveButton.disabled = !monitor.checked;
+    approveButton.addEventListener("click", () => {
+      void (async () => {
+        if (currentTabId === null) return;
+        communityStatus.textContent = "";
+        try {
+          const result = await chrome.tabs.sendMessage(currentTabId, { type: "APPLY_COMMUNITY_RECIPE", recipe });
+          if (result?.error) throw new Error(result.error);
+          renderFailure(result as FailureView);
+          void refreshHistory();
+        } catch (error) {
+          communityStatus.textContent = error instanceof Error ? error.message : "Could not apply Repair Recipe.";
+        }
+      })();
+    });
+    item.append(heading, summary, safety, approveButton);
+    communityList.append(item);
+  }
+}
+
+async function refreshCommunity(): Promise<void> {
+  if (!currentOrigin) { renderCommunity([]); return; }
+  const requestedOrigin = currentOrigin;
+  try {
+    const res = await chrome.runtime.sendMessage({ type: "GET_COMMUNITY_RECIPES", origin: requestedOrigin, fetchLive: monitor.checked }) as { recipes?: RepairRecipe[] };
+    if (currentOrigin === requestedOrigin) renderCommunity(res.recipes ?? []);
+  } catch { if (currentOrigin === requestedOrigin) renderCommunity([]); }
 }
 
 function renderHistory(entries: RepairHistoryEntry[]): void {
@@ -160,6 +223,7 @@ async function sendTabCommand<T>(type: "APPLY_REPAIR" | "UNDO_REPAIR" | "START_P
 const refreshFailure = async () => {
   await queryTabState<FailureView>("GET_FAILURE", renderFailure);
   await refreshHistory();
+  await refreshCommunity();
 };
 const refreshPicker = () => queryTabState<PickerState>("GET_PICKER_STATE", renderPicker);
 
@@ -224,6 +288,26 @@ investigate.addEventListener("click", () => {
   })();
 });
 
+shareRecipe.addEventListener("click", () => {
+  void (async () => {
+    if (currentTabId === null) return;
+    shareRecipe.disabled = true;
+    shareStatus.textContent = "Preparing sanitized Repair Recipe…";
+    try {
+      const draft = await chrome.tabs.sendMessage(currentTabId, { type: "GET_SHAREABLE_RECIPE" }) as { recipe?: RepairRecipe; error?: string };
+      if (draft.error || !draft.recipe) throw new Error(draft.error ?? "Cannot share this repair.");
+      const res = await chrome.runtime.sendMessage({ type: "SHARE_RECIPE", recipe: draft.recipe }) as { ok?: boolean; error?: string };
+      if (!res.ok) throw new Error(res.error ?? "Could not share recipe.");
+      shareStatus.textContent = "Shared sanitized Repair Recipe to the Community Repair Network.";
+      void refreshCommunity();
+    } catch (error) {
+      shareStatus.textContent = error instanceof Error ? error.message : "Could not share Repair Recipe.";
+    } finally {
+      shareRecipe.disabled = false;
+    }
+  })();
+});
+
 async function handleCloudDecision(decision: "approved" | "declined"): Promise<void> {
   if (!pendingConsent) return;
   const { runId, evidence, rulesFallback } = pendingConsent;
@@ -259,6 +343,7 @@ async function refresh(): Promise<void> {
   cloudConsentSelect.disabled = true;
   cloudConfirm.hidden = true;
   pendingConsent = null;
+  communityStatus.textContent = "";
   const tabs = await chrome.tabs.query({ currentWindow: true });
   const tab = tabs.find((candidate) => candidate.active && isMonitorableSite(candidate.url ?? ""))
     ?? tabs.find((candidate) => isMonitorableSite(candidate.url ?? ""));
@@ -271,6 +356,7 @@ async function refresh(): Promise<void> {
     monitor.checked = false;
     renderPicker(null);
     renderFailure(null);
+    renderCommunity([]);
     await refreshHistory();
     return;
   }
@@ -327,6 +413,7 @@ chrome.tabs.onUpdated.addListener((_id, change) => { if (change.url) void refres
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && currentOrigin && changes[interactionCountKey(currentOrigin)]) void showStatus(currentOrigin, monitor.checked);
   if (area === "local" && changes[REPAIR_HISTORY_KEY]) void refreshHistory();
+  if (area === "local" && currentOrigin && changes[communityRecipesKey(currentOrigin)]) void refreshCommunity();
 });
 chrome.runtime.onMessage.addListener((message: unknown) => {
   if (typeof message !== "object" || message === null || !("type" in message)) return;

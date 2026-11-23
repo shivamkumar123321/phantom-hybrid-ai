@@ -1,0 +1,178 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// This security rules file assumes the following data structures:
+//
+// Collection: repair_recipes
+// Document ID: {recipeId} (Firestore auto-generated document ID)
+// Access: Anonymous Firebase Auth required for read/create; immutable after creation; author-only delete.
+// Fields (all 9 required, no extraneous fields permitted):
+//   - origin: string (required, 8..200 chars, matches ^https?://[^/\s]+$) - normalized site origin
+//   - bugType: string (required, enum: navigation | css-button | image | form-button | manual)
+//   - elementTag: string (required, 1..20 chars, matches ^[a-z0-9-]+$) - target HTML tag
+//   - selectorHint: string (required, 1..80 chars, no <, >, or `) - generalized CSS selector hint
+//   - summary: string (required, 1..180 chars, no < or >) - human-readable failure/repair summary
+//   - repairAction: string (required, enum: RESTORE_NAVIGATION | RESTORE_POINTER_EVENTS |
+//       RESTORE_BUTTON_SEMANTICS | USE_KNOWN_IMAGE_FALLBACK | RESTORE_SUPPORTED_FORM_BEHAVIOR)
+//   - safetyNote: string (required, 1..200 chars, no < or >) - safety note shown prior to user approval
+//   - createdAt: string (required, 10..40 chars) - ISO 8601 timestamp string
+//   - authorUid: string (required, 1..128 chars, must equal request.auth.uid) - anonymous author UID
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    // Check if the caller is authenticated (including Anonymous Firebase Auth)
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if the caller is the original author of the existing recipe document
+    function isRecipeAuthor() {
+      return isAuthenticated() &&
+             resource.data.authorUid is string &&
+             resource.data.authorUid == request.auth.uid;
+    }
+
+    // Validate that the document contains only the allowed fields
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // Validate that all required fields exist
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    // Validate origin URL format (http/https origin only, no paths or whitespace)
+    function isValidOrigin(origin) {
+      return origin is string &&
+             origin.size() >= 8 &&
+             origin.size() <= 200 &&
+             origin.matches('^https?://[^/\\s]+$');
+    }
+
+    // Validate bugType against supported failure categories
+    function isValidBugType(bugType) {
+      return bugType is string &&
+             bugType in ['navigation', 'css-button', 'image', 'form-button', 'manual'];
+    }
+
+    // Validate normalized HTML tag name
+    function isValidElementTag(tag) {
+      return tag is string &&
+             tag.size() >= 1 &&
+             tag.size() <= 20 &&
+             tag.matches('^[a-z0-9-]+$');
+    }
+
+    // Validate selectorHint (reject HTML angle brackets and backticks across all lines)
+    function isValidSelectorHint(hint) {
+      return hint is string &&
+             hint.size() >= 1 &&
+             hint.size() <= 80 &&
+             !hint.matches('[\\s\\S]*[<>`][\\s\\S]*');
+    }
+
+    // Validate summary (reject HTML angle brackets across all lines)
+    function isValidSummary(summary) {
+      return summary is string &&
+             summary.size() >= 1 &&
+             summary.size() <= 180 &&
+             !summary.matches('[\\s\\S]*[<>][\\s\\S]*');
+    }
+
+    // Validate repairAction against safe shareable actions (explicitly excludes NO_SAFE_REPAIR)
+    function isValidRepairAction(action) {
+      return action is string &&
+             action in [
+               'RESTORE_NAVIGATION',
+               'RESTORE_POINTER_EVENTS',
+               'RESTORE_BUTTON_SEMANTICS',
+               'USE_KNOWN_IMAGE_FALLBACK',
+               'RESTORE_SUPPORTED_FORM_BEHAVIOR'
+             ];
+    }
+
+    // Validate safetyNote (reject HTML angle brackets across all lines)
+    function isValidSafetyNote(note) {
+      return note is string &&
+             note.size() >= 1 &&
+             note.size() <= 200 &&
+             !note.matches('[\\s\\S]*[<>][\\s\\S]*');
+    }
+
+    // Validate createdAt string length
+    function isValidCreatedAt(createdAt) {
+      return createdAt is string &&
+             createdAt.size() >= 10 &&
+             createdAt.size() <= 40;
+    }
+
+    // Validate authorUid matches the authenticated caller
+    function isValidAuthorUid(authorUid) {
+      return authorUid is string &&
+             authorUid.size() >= 1 &&
+             authorUid.size() <= 128 &&
+             authorUid == request.auth.uid;
+    }
+
+    // ===============================================================
+    // Domain Validator
+    // ===============================================================
+
+    function isValidRepairRecipe(data) {
+      let allowedFields = [
+        'origin',
+        'bugType',
+        'elementTag',
+        'selectorHint',
+        'summary',
+        'repairAction',
+        'safetyNote',
+        'createdAt',
+        'authorUid'
+      ];
+      return hasOnlyAllowedFields(allowedFields) &&
+             hasRequiredFields(allowedFields) &&
+             isValidOrigin(data.origin) &&
+             isValidBugType(data.bugType) &&
+             isValidElementTag(data.elementTag) &&
+             isValidSelectorHint(data.selectorHint) &&
+             isValidSummary(data.summary) &&
+             isValidRepairAction(data.repairAction) &&
+             isValidSafetyNote(data.safetyNote) &&
+             isValidCreatedAt(data.createdAt) &&
+             isValidAuthorUid(data.authorUid);
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    // Community Repair Network recipes:
+    // - Authenticated reads (supports Anonymous Firebase Auth origin queries)
+    // - Strictly validated creates bound to the caller's UID
+    // - Immutable once shared (updates disabled to prevent post-approval tampering)
+    // - Author-only deletes
+    match /repair_recipes/{recipeId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidRepairRecipe(request.resource.data);
+      allow update: if false;
+      allow delete: if isRecipeAuthor();
+    }
+
+    // Default deny all other collections, documents, and nested subcollections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

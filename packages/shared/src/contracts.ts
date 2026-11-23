@@ -22,5 +22,14 @@ export const diagnosis = z.object({
 
 export type Diagnosis = z.infer<typeof diagnosis>;
 export type RepairState = "suspected" | "preview" | "pending" | "verified" | "undone";
-export type FailureView = { kind: FailureKind; state: RepairState; diagnosis: Diagnosis | null; repairId?: string | null } | null;
+export type FailureView = { kind: FailureKind; state: RepairState; diagnosis: Diagnosis | null; repairId?: string | null; fromCommunity?: boolean } | null;
 export type PickerState = { active: boolean; notice: string | null };
+
+export function siteOrigin(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.origin : null;
+  } catch {
+    return null;
+  }
+}

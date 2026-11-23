@@ -3,6 +3,7 @@ import { cloudConsent } from "./ai-routing";
 import { diagnosis } from "./contracts";
 import { repairHistoryEntry, verificationResult } from "./history";
 import { pipelineEvent } from "./pipeline";
+import { repairRecipe } from "./recipes";
 import { evidencePacket } from "./sanitize";
 
 export * from "./contracts";
@@ -11,6 +12,7 @@ export * from "./ai-routing";
 export * from "./bridge";
 export * from "./history";
 export * from "./pipeline";
+export * from "./recipes";
 
 export const monitoringMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("GET_MONITORING"), origin: z.string().url() }),
@@ -37,6 +39,8 @@ export const monitoringMessage = z.discriminatedUnion("type", [
     verificationResult,
   }),
   z.object({ type: z.literal("REPORT_PIPELINE_EVENT"), event: pipelineEvent }),
+  z.object({ type: z.literal("SHARE_RECIPE"), recipe: repairRecipe }),
+  z.object({ type: z.literal("GET_COMMUNITY_RECIPES"), origin: z.string().url(), fetchLive: z.boolean().optional() }),
 ]);
 
 export type MonitoringMessage = z.infer<typeof monitoringMessage>;
@@ -58,15 +62,8 @@ export const repairCommand = z.discriminatedUnion("type", [
   z.object({ type: z.literal("CANCEL_PICKING") }),
   z.object({ type: z.literal("GET_EVIDENCE") }),
   z.object({ type: z.literal("SET_DIAGNOSIS"), diagnosis }),
+  z.object({ type: z.literal("GET_SHAREABLE_RECIPE") }),
+  z.object({ type: z.literal("APPLY_COMMUNITY_RECIPE"), recipe: repairRecipe }),
 ]);
 
 export type RepairCommand = z.infer<typeof repairCommand>;
-
-export function siteOrigin(url: string): string | null {
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.origin : null;
-  } catch {
-    return null;
-  }
-}

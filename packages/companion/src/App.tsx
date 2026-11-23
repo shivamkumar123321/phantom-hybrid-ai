@@ -15,6 +15,7 @@ import {
   type PipelineStageStatus,
 } from "@phantom/shared";
 import { enableOnDeviceModel, getAiEnvironmentStatus, runHybridModel } from "./firebase-ai";
+import { fetchCommunityRecipes, shareCommunityRecipe } from "./firebase-community";
 
 const statusColors: Record<PipelineStageStatus, string> = {
   done: "#16a34a",
@@ -78,6 +79,29 @@ export function App() {
       }
       if (req.type === "PIPELINE_EVENT") {
         appendEvents([req.event]);
+        return;
+      }
+      if (req.type === "SHARE_RECIPE") {
+        void shareCommunityRecipe(req.recipe).then((res) => {
+          port.postMessage({
+            id: req.id,
+            type: "SHARE_RECIPE_RESPONSE",
+            ok: res.ok,
+            recipe: res.ok ? res.recipe : undefined,
+            error: res.ok ? undefined : res.error,
+          } satisfies CompanionResponse);
+        });
+        return;
+      }
+      if (req.type === "GET_COMMUNITY_RECIPES") {
+        void fetchCommunityRecipes(req.origin).then((res) => {
+          port.postMessage({
+            id: req.id,
+            type: "COMMUNITY_RECIPES_RESPONSE",
+            recipes: res.recipes,
+            available: res.available,
+          } satisfies CompanionResponse);
+        });
         return;
       }
       void (async () => {

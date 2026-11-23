@@ -18,12 +18,13 @@ import {
 import { applyPointerEventsRepair, diagnoseBlockedButton, findBlockedButtonAtPoint, undoPointerEventsRepair, type PointerEventsSnapshot } from "./css-button";
 import { applyImageFallback, diagnoseBrokenImage, isFailedImage, isImageFallbackLoaded, knownImageFallback, restoreImageSource, type OriginalImageSource } from "./broken-image";
 import { applyFormButtonRepair, diagnoseFormButton, supportedFormButton, verifiesFormButton } from "./form-button";
+import { buildShareableRecipe, resolveCommunityTarget } from "./community";
 import { inspectPickedElement, resolvePickableTarget } from "./manual-picker";
 import { diagnoseNavigation, hasBrokenDestination, knownDestination } from "./navigation";
 import { isSensitiveTarget } from "./sensitive";
 
 type Failure = {
-  runId: string; repairId?: string;
+  runId: string; repairId?: string; fromCommunity?: boolean;
   kind: FailureKind; target: HTMLElement; diagnosis: Diagnosis; state: RepairState;
   originalOutline: string; originalOutlineOffset: string;
   originalHref?: string | null; originalUrl?: string;
@@ -52,6 +53,7 @@ function visibleState(): FailureView {
     state: failure.state,
     diagnosis: failure.state === "suspected" ? null : failure.diagnosis,
     repairId: failure.repairId ?? null,
+    fromCommunity: failure.fromCommunity,
   };
 }
 
@@ -414,8 +416,47 @@ if (origin) {
       sendResponse(pickerState());
       return false;
     }
+    if (parsed.data.type === "APPLY_COMMUNITY_RECIPE") {
+      if (!enabled || !origin) { sendResponse({ error: "Monitoring is off" }); return false; }
+      if (failure?.state === "pending" || failure?.state === "verified") {
+        sendResponse({ error: "Undo the active repair before applying a Repair Recipe." });
+        return false;
+      }
+      const resolved = resolveCommunityTarget(document, origin, parsed.data.recipe);
+      if (!resolved.ok) { sendResponse({ error: resolved.error }); return false; }
+      const preserved = savedOutline(resolved.target);
+      if (failure) restoreOutline(failure);
+      failure = {
+        runId: crypto.randomUUID(),
+        fromCommunity: true,
+        kind: resolved.kind,
+        target: resolved.target,
+        diagnosis: resolved.diagnosis,
+        state: "preview",
+        ...preserved,
+      };
+      emitPipeline(failure, "detection", "done", `Repair Recipe matched ${resolved.kind}`);
+      emitPipeline(failure, "evidence", "done", "Verified local page metadata");
+      emitPipeline(failure, "routing", "done", "Approved community Repair Recipe", "rules-only", "RULES_ONLY");
+      emitPipeline(failure, "diagnosis", "done", resolved.diagnosis.action, "rules-only", "RULES_ONLY");
+      const error = applyRepair(failure);
+      if (error) { restoreOutline(failure); failure = null; sendResponse({ error }); return false; }
+      sendResponse(visibleState());
+      announce();
+      return false;
+    }
     if (!failure || !failure.target.isConnected) { sendResponse({ error: "No active failure" }); return false; }
     if (!enabled && parsed.data.type !== "UNDO_REPAIR") { sendResponse({ error: "Monitoring is off" }); return false; }
+    if (parsed.data.type === "GET_SHAREABLE_RECIPE") {
+      if (!origin || failure.state !== "verified" || failure.fromCommunity) {
+        sendResponse({ error: "Verify a local repair before sharing a Repair Recipe." });
+        return false;
+      }
+      const recipe = buildShareableRecipe({ origin, bugType: failure.kind, target: failure.target, diagnosis: failure.diagnosis });
+      if (!recipe) { sendResponse({ error: "This repair cannot be shared safely." }); return false; }
+      sendResponse({ recipe });
+      return false;
+    }
     if (parsed.data.type === "GET_EVIDENCE") {
       if (isSensitiveTarget(failure.target)) { sendResponse({ error: "Sensitive controls cannot be inspected or repaired." }); return false; }
       sendResponse({ evidence: collectEvidence(failure), rulesFallback: failure.diagnosis, runId: failure.runId });

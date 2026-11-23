@@ -15,6 +15,10 @@ export const evidencePacket = z.object({
 
 export type EvidencePacket = z.infer<typeof evidencePacket>;
 
+export const SENSITIVE_CONTROL_WORDS = /(?:^|[^a-z])(?:password|passcode|payment|pay|checkout|billing|bank|card|credit|cvv|cvc|expiry|exp-date|security|login|log[ -]?in|sign[ -]?in|authentication|auth|otp|one-time|verification|2fa|mfa)(?=$|[^a-z])/i;
+export const SENSITIVE_DATA_WORDS = /(?:^|[^a-z])(?:password|passcode|passwd|secret|token|cookie|session|cvv|cvc|ssn|otp|2fa|mfa)(?=$|[^a-z])/i;
+export const SENSITIVE_CREDENTIAL_TEXT = /(?:Bearer\s+[A-Za-z0-9._~+/=-]+|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+|\b(?:AIza|sk-|ghp_|gho_|xox[baprs]-)[A-Za-z0-9_-]{8,}\b|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|\b(?:\d[ -]?){13,19}\b)/i;
+
 const sensitiveKeyPattern = /(password|passcode|passwd|token|auth|cookie|secret|key|session|value|email|card|cvv|cvc|ssn)/i;
 
 export function sanitizeText(raw: string, maxLength = 240): string {

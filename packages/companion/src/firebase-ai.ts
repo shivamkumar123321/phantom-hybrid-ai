@@ -13,17 +13,26 @@ const firebaseConfig = {
 const recaptchaSiteKey = process.env.VITE_RECAPTCHA_SITE_KEY || "";
 const hasFirebaseConfig = Boolean(firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId);
 
+let cachedApp: FirebaseApp | null = null;
 let cachedAi: AI | null = null;
 let downloadProgress: number | undefined;
 let downloading = false;
 
-function getAiService(): AI | null {
+export function getFirebaseApp(): FirebaseApp | null {
   if (!hasFirebaseConfig) return null;
-  if (cachedAi) return cachedAi;
+  if (cachedApp) return cachedApp;
   const app: FirebaseApp = initializeApp(firebaseConfig);
   if (recaptchaSiteKey) {
     initializeAppCheck(app, { provider: new ReCaptchaV3Provider(recaptchaSiteKey), isTokenAutoRefreshEnabled: true });
   }
+  cachedApp = app;
+  return cachedApp;
+}
+
+function getAiService(): AI | null {
+  const app = getFirebaseApp();
+  if (!app) return null;
+  if (cachedAi) return cachedAi;
   cachedAi = getAI(app, { backend: new GoogleAIBackend() });
   return cachedAi;
 }

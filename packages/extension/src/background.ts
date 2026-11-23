@@ -1,7 +1,9 @@
 import {
   cloudConsentKey,
+  communityRecipesKey,
   companionResponse,
   DEFAULT_COMPANION_URL,
+  filterValidRecipes,
   interactionCountKey,
   isAllowedCompanionOrigin,
   monitoringKey,
@@ -15,11 +17,13 @@ import {
   UNAVAILABLE_AI_ENV,
   updateHistoryVerification,
   upsertHistoryEntry,
+  validateCommunityRecipe,
   type CloudConsent,
   type CompanionRequest,
   type CompanionResponse,
   type PipelineEvent,
   type RepairHistoryEntry,
+  type RepairRecipe,
 } from "@phantom/shared";
 
 let companionPort: chrome.runtime.Port | null = null;
@@ -73,6 +77,17 @@ async function writeRepairHistory(entries: RepairHistoryEntry[]): Promise<Repair
   await chrome.storage.local.set({ [REPAIR_HISTORY_KEY]: entries });
   void chrome.runtime.sendMessage({ type: "HISTORY_UPDATED" }).catch(() => {});
   return entries;
+}
+
+async function readCachedCommunityRecipes(origin: string): Promise<RepairRecipe[]> {
+  const stored = await chrome.storage.local.get(communityRecipesKey(origin));
+  return filterValidRecipes(stored[communityRecipesKey(origin)], origin);
+}
+
+async function writeCachedCommunityRecipes(origin: string, recipes: RepairRecipe[]): Promise<RepairRecipe[]> {
+  const valid = filterValidRecipes(recipes, origin);
+  await chrome.storage.local.set({ [communityRecipesKey(origin)]: valid });
+  return valid;
 }
 
 function forwardPipelineEvent(port: chrome.runtime.Port, event: PipelineEvent): void {
@@ -271,6 +286,44 @@ chrome.runtime.onMessage.addListener((untrusted: unknown, sender, sendResponse) 
     pushPipelineEvent(message.event);
     sendResponse({ received: true });
     return false;
+  }
+  if (message.type === "SHARE_RECIPE") {
+    void (async () => {
+      const clean = validateCommunityRecipe(message.recipe);
+      if (!clean) { sendResponse({ ok: false, error: "Invalid or sensitive Repair Recipe." }); return; }
+      const port = await ensureCompanionPort(true);
+      if (!port) { sendResponse({ ok: false, error: "Community sharing requires AI Companion and Firebase configuration." }); return; }
+      const reply = await sendCompanionRequest(port, { id: crypto.randomUUID(), type: "SHARE_RECIPE", recipe: clean });
+      if (reply?.type === "SHARE_RECIPE_RESPONSE") {
+        if (reply.ok && reply.recipe) {
+          const cached = await readCachedCommunityRecipes(clean.origin);
+          await writeCachedCommunityRecipes(clean.origin, [reply.recipe, ...cached.filter((r) => r.selectorHint !== clean.selectorHint)].slice(0, 10));
+        }
+        sendResponse(reply);
+      } else {
+        sendResponse({ ok: false, error: "Community sharing timed out." });
+      }
+    })();
+    return true;
+  }
+  if (message.type === "GET_COMMUNITY_RECIPES") {
+    void (async () => {
+      const cached = await readCachedCommunityRecipes(message.origin);
+      const port = await ensureCompanionPort(Boolean(message.fetchLive));
+      if (!port) { sendResponse({ recipes: cached, available: false }); return; }
+      const reply = await sendCompanionRequest(port, { id: crypto.randomUUID(), type: "GET_COMMUNITY_RECIPES", origin: message.origin }, 3000);
+      if (reply?.type === "COMMUNITY_RECIPES_RESPONSE") {
+        if (reply.available) {
+          const merged = await writeCachedCommunityRecipes(message.origin, reply.recipes);
+          sendResponse({ recipes: merged, available: true });
+          return;
+        }
+        sendResponse({ recipes: cached, available: false });
+        return;
+      }
+      sendResponse({ recipes: cached, available: false });
+    })();
+    return true;
   }
   if (message.type === "GET_COMPANION_STATUS") {
     void (async () => {

@@ -6,7 +6,7 @@
 
 **Status:** ready-for-agent
 
-- [ ] Sharing is optional and uses anonymous sign-in with a validated, sanitized Repair Recipe.
-- [ ] Community suggestions show their proposed Repair Action and require explicit approval before application.
-- [ ] Suggested actions pass the same allowlist, page-hint, verification, and Undo rules as local repairs.
-- [ ] Invalid recipes and sensitive data are rejected; tests cover sharing and manual approval.
+- [x] Sharing is optional and uses anonymous sign-in with a validated, sanitized Repair Recipe.
+- [x] Community suggestions show their proposed Repair Action and require explicit approval before application.
+- [x] Suggested actions pass the same allowlist, page-hint, verification, and Undo rules as local repairs.
+- [x] Invalid recipes and sensitive data are rejected; tests cover sharing and manual approval.
