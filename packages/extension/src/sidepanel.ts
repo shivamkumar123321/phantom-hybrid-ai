@@ -15,11 +15,14 @@ let currentTabId: number | null = null;
 function renderFailure(view: FailureView): void {
   failureSection.hidden = !view || view.state === "undone";
   if (!view || view.state === "undone") return;
-  const labels = { suspected: "A link may be broken. Investigate to see a safe option.", preview: "Review the proposed repair before applying it.", pending: "Repair applied. Click the link to verify navigation.", verified: "Verification Result: navigation worked.", undone: "" };
+  const names = { navigation: "link", "css-button": "button", image: "image", "form-button": "form button" };
+  const pending = { navigation: "Click the link to verify navigation.", "css-button": "Click the button to verify its action.", image: "Waiting for the backup image to load.", "form-button": "Click the form button to verify submission." };
+  const verified = { navigation: "navigation worked.", "css-button": "the button action worked.", image: "the backup image loaded.", "form-button": "the form handled submission." };
+  const labels = { suspected: `A ${names[view.kind]} may be broken. Investigate to see a safe option.`, preview: "Review the proposed repair before applying it.", pending: `Repair applied. ${pending[view.kind]}`, verified: `Verification Result: ${verified[view.kind]}`, undone: "" };
   failureStatus.textContent = labels[view.state];
   investigate.hidden = view.state !== "suspected";
   diagnosisSection.hidden = !view.diagnosis;
-  apply.hidden = view.state !== "preview" || view.diagnosis?.action !== "RESTORE_NAVIGATION";
+  apply.hidden = view.state !== "preview" || !view.diagnosis || view.diagnosis.action === "NO_SAFE_REPAIR";
   undo.hidden = view.state !== "pending" && view.state !== "verified";
   if (view.diagnosis) {
     document.querySelector<HTMLElement>("#reason")!.textContent = `What went wrong: ${view.diagnosis.reason}`;

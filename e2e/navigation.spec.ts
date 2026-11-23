@@ -4,7 +4,7 @@ import { resolve, sep } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 
-test("broken navigation can be investigated, repaired, verified and undone", async () => {
+test("four demo failures can be investigated, repaired, verified and undone", async () => {
   const extensionPath = resolve("packages/extension/dist");
   const profile = await mkdtemp(resolve(tmpdir(), "phantom-browser-"));
   const port = 43000 + Math.floor(Math.random() * 1000);
@@ -27,7 +27,7 @@ test("broken navigation can be investigated, repaired, verified and undone", asy
     await expect(panel.locator("#status")).toContainText("Monitoring is on");
     await demo.locator("#demo-link").click();
     await expect(panel.locator("#failure")).toBeVisible();
-    await expect(panel.locator("#failure-status")).toContainText("may be broken");
+    await expect(panel.locator("#failure-status")).toContainText("link may be broken");
     await panel.locator("#investigate").click();
     await expect(panel.locator("#action")).toContainText("RESTORE_NAVIGATION");
     await expect(panel.locator("#source")).toContainText("rules-only");
@@ -52,6 +52,48 @@ test("broken navigation can be investigated, repaired, verified and undone", asy
     });
     await demo.locator("#working-handler").click();
     await expect(demo.getByText("Details shown")).toBeVisible();
+    await expect(panel.locator("#failure")).toBeHidden();
+
+    await demo.locator("#broken-button").click({ force: true });
+    await expect(panel.locator("#failure-status")).toContainText("button may be broken");
+    await panel.locator("#investigate").click();
+    await expect(panel.locator("#action")).toContainText("RESTORE_POINTER_EVENTS");
+    await panel.locator("#apply").click();
+    await expect(panel.locator("#failure-status")).toContainText("Click the button");
+    await demo.locator("#broken-button").click();
+    await expect(panel.locator("#failure-status")).toContainText("button action worked");
+    await panel.locator("#undo").click();
+    await expect(demo.locator("#broken-button")).toHaveCSS("pointer-events", "none");
+
+    await demo.locator("#image-activate").click();
+    await expect(panel.locator("#failure-status")).toContainText("image may be broken");
+    await panel.locator("#investigate").click();
+    await expect(panel.locator("#action")).toContainText("USE_KNOWN_IMAGE_FALLBACK");
+    await panel.locator("#apply").click();
+    await expect(panel.locator("#failure-status")).toContainText("backup image loaded");
+    await panel.locator("#undo").click();
+    await expect(demo.locator("#broken-image")).toHaveAttribute("src", /missing-image/);
+    await demo.evaluate(() => { (document.querySelector("#no-fallback-image") as HTMLImageElement).src = "/missing-no-fallback.png?again=" + Date.now(); });
+    await expect(panel.locator("#failure-status")).toContainText("image may be broken");
+    await panel.locator("#investigate").click();
+    await expect(panel.locator("#action")).toContainText("NO_SAFE_REPAIR");
+    await expect(panel.locator("#apply")).toBeHidden();
+
+    await demo.locator("#form-button").click();
+    await expect(panel.locator("#failure-status")).toContainText("form button may be broken");
+    await panel.locator("#investigate").click();
+    await expect(panel.locator("#action")).toContainText("RESTORE_BUTTON_SEMANTICS");
+    await panel.locator("#apply").click();
+    await demo.locator("#form-button").click();
+    await expect(panel.locator("#failure-status")).toContainText("form handled submission");
+    await panel.locator("#undo").click();
+    await expect(demo.locator("#form-button")).toHaveAttribute("type", "button");
+    await demo.evaluate(() => {
+      const form = document.createElement("form");
+      form.innerHTML = '<input type="password"><button type="button" id="sensitive-button">Continue</button>';
+      document.body.append(form);
+    });
+    await demo.locator("#sensitive-button").click();
     await expect(panel.locator("#failure")).toBeHidden();
   } finally {
     await context.close();

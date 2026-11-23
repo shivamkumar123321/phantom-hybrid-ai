@@ -11,6 +11,8 @@
     #destination { padding: 12px; background: #e8f6e8; }
     #destination:not(:target) { display: none; }
     #log { white-space: pre-wrap; background: #f3f4f6; padding: 12px; min-height: 56px; }
+    #broken-button { pointer-events: none; }
+    img { display: block; width: 96px; height: 96px; object-fit: contain; }
   </style>
 </head>
 <body>
@@ -21,6 +23,25 @@
     <a id="demo-link" href="#" data-href="#destination">View the destination</a>
     <p id="state">Before: the link is broken.</p>
     <div id="destination" tabindex="-1">Destination reached.</div>
+  </section>
+  <section class="card" id="css-scenario">
+    <h2>CSS-blocked button</h2>
+    <button id="broken-button" type="button">Run action</button>
+    <p id="css-state">Before: the action has not run.</p>
+    <button id="css-activate" type="button">Activate bug</button><button id="css-reset" type="button">Reset to working</button>
+  </section>
+  <section class="card" id="image-scenario">
+    <h2>Broken image</h2>
+    <img id="broken-image" src="/missing-image.png" data-fallback-src="/backup.svg" alt="Demo illustration">
+    <p id="image-state">Before: the image is broken.</p>
+    <button id="image-activate" type="button">Activate bug</button><button id="image-reset" type="button">Reset to working</button>
+    <img id="no-fallback-image" src="/missing-no-fallback.png" alt="No fallback example">
+  </section>
+  <section class="card" id="form-scenario">
+    <h2>Broken form button</h2>
+    <form id="demo-form"><label>Demo name <input name="demoName" autocomplete="off"></label><button id="form-button" type="button">Save demo entry</button></form>
+    <p id="form-state">Before: the form has not submitted.</p>
+    <button id="form-activate" type="button">Activate bug</button><button id="form-reset" type="button">Reset to working</button>
   </section>
   <section class="card">
     <h2>Developer controls</h2>
@@ -47,6 +68,19 @@
     window.addEventListener('hashchange', () => {
       if (location.hash === '#destination') { state.textContent = 'After: destination reached.'; record('Destination reached.'); }
     });
+    const cssButton = document.querySelector('#broken-button');
+    cssButton.addEventListener('click', () => { document.querySelector('#css-state').textContent = 'After: the action ran.'; record('CSS button action ran.'); });
+    document.querySelector('#css-activate').addEventListener('click', () => { cssButton.style.pointerEvents = 'none'; document.querySelector('#css-state').textContent = 'Before: the action has not run.'; record('CSS-blocked button activated.'); });
+    document.querySelector('#css-reset').addEventListener('click', () => { cssButton.style.pointerEvents = 'auto'; document.querySelector('#css-state').textContent = 'Before: the action has not run.'; record('CSS button reset.'); });
+    const brokenImage = document.querySelector('#broken-image');
+    document.querySelector('#image-activate').addEventListener('click', () => { brokenImage.src = '/missing-image.png?again=' + Date.now(); document.querySelector('#image-state').textContent = 'Before: the image is broken.'; record('Broken image activated.'); });
+    document.querySelector('#image-reset').addEventListener('click', () => { brokenImage.src = '/backup.svg'; document.querySelector('#image-state').textContent = 'Before: the image works.'; record('Image reset.'); });
+    brokenImage.addEventListener('load', () => { if (brokenImage.currentSrc.endsWith('/backup.svg')) { document.querySelector('#image-state').textContent = 'After: backup image loaded.'; record('Backup image loaded.'); } });
+    const form = document.querySelector('#demo-form');
+    const formButton = document.querySelector('#form-button');
+    form.addEventListener('submit', (event) => { event.preventDefault(); document.querySelector('#form-state').textContent = 'After: form submission handled locally.'; record('Demo form submission handled.'); });
+    document.querySelector('#form-activate').addEventListener('click', () => { formButton.type = 'button'; document.querySelector('#form-state').textContent = 'Before: the form has not submitted.'; record('Broken form button activated.'); });
+    document.querySelector('#form-reset').addEventListener('click', () => { formButton.type = 'submit'; document.querySelector('#form-state').textContent = 'Before: the form has not submitted.'; record('Form button reset.'); });
     record('Broken navigation active.');
   </script>
 </body>
