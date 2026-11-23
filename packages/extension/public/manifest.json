@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "PHANTOM",
+  "version": "0.1.0",
+  "description": "Monitor and repair broken website interactions with your permission.",
+  "permissions": ["sidePanel", "storage", "tabs"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": { "service_worker": "background.js" },
+  "side_panel": { "default_path": "sidepanel.html" },
+  "action": { "default_title": "Open PHANTOM" },
+  "content_scripts": [{ "matches": ["http://*/*", "https://*/*"], "js": ["content.js"], "run_at": "document_idle" }]
+}

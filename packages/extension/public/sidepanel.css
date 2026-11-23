@@ -1,0 +1,8 @@
+:root { color-scheme: light dark; font: 15px system-ui, sans-serif; }
+body { margin: 0; }
+main { padding: 20px; }
+h1 { font-size: 1.5rem; margin-top: 0; }
+#site { overflow-wrap: anywhere; color: #68717d; }
+.switch { display: flex; align-items: center; gap: 10px; padding: 15px; border: 1px solid #858b96; border-radius: 9px; cursor: pointer; }
+.switch input { width: 20px; height: 20px; }
+.note { line-height: 1.5; color: #68717d; }
