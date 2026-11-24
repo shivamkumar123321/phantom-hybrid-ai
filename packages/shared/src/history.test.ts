@@ -51,5 +51,18 @@ describe("local repair history", () => {
 
     const [undone] = updateHistoryVerification([verified], "rep-1", "undone");
     expect(isEntryUndoable(undone, { origin: "https://demo.example", activeRepairId: "rep-1", activeState: "verified" })).toBe(false);
+
+    expect(isEntryUndoable(verified, {
+      origin: "https://demo.example",
+      activeRepairId: "rep-2",
+      activeState: "verified",
+      activeRepairIds: ["rep-1", "rep-2"],
+    })).toBe(true);
+    expect(isEntryUndoable(undone, {
+      origin: "https://demo.example",
+      activeRepairId: "rep-2",
+      activeState: "verified",
+      activeRepairIds: ["rep-1", "rep-2"],
+    })).toBe(false);
   });
 });

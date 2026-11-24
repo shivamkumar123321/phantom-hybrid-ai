@@ -26,6 +26,7 @@ import {
   type RepairRecipe,
 } from "@phantom/shared";
 
+const PIPELINE_EVENTS_KEY = "recent-pipeline-events";
 let companionPort: chrome.runtime.Port | null = null;
 let companionTabId: number | null = null;
 let connectAttempt: Promise<chrome.runtime.Port | null> | null = null;
@@ -33,6 +34,22 @@ const connectWaiters: Array<(port: chrome.runtime.Port | null) => void> = [];
 const pendingRequests = new Map<string, { resolve: (res: CompanionResponse | null) => void; timer: ReturnType<typeof setTimeout> }>();
 const activeTabUrls = new Map<number, string>();
 let recentPipelineEvents: PipelineEvent[] = [];
+let eventsLoaded = false;
+
+async function loadPipelineEvents(): Promise<PipelineEvent[]> {
+  if (eventsLoaded) return recentPipelineEvents;
+  try {
+    const stored = await chrome.storage.local.get(PIPELINE_EVENTS_KEY);
+    const raw = stored[PIPELINE_EVENTS_KEY];
+    if (Array.isArray(raw)) recentPipelineEvents = raw.slice(-30) as PipelineEvent[];
+  } catch { /* Ignore storage read failure. */ }
+  eventsLoaded = true;
+  return recentPipelineEvents;
+}
+
+function persistPipelineEvents(): void {
+  void chrome.storage.local.set({ [PIPELINE_EVENTS_KEY]: recentPipelineEvents }).catch(() => {});
+}
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.url) activeTabUrls.set(tabId, changeInfo.url);
@@ -102,12 +119,21 @@ function forwardPipelineEvent(port: chrome.runtime.Port, event: PipelineEvent): 
   port.postMessage({ id: crypto.randomUUID(), type: "PIPELINE_EVENT", event } satisfies CompanionRequest);
 }
 
+function recordPipelineEvents(events: readonly PipelineEvent[], forward = true): void {
+  void loadPipelineEvents().then(() => {
+    recentPipelineEvents = [...recentPipelineEvents, ...events].slice(-30);
+    persistPipelineEvents();
+    if (!forward || !companionPort) return;
+    for (const event of events) {
+      try {
+        forwardPipelineEvent(companionPort, event);
+      } catch { break; }
+    }
+  });
+}
+
 function pushPipelineEvent(event: PipelineEvent): void {
-  recentPipelineEvents = [...recentPipelineEvents, event].slice(-30);
-  if (!companionPort) return;
-  try {
-    forwardPipelineEvent(companionPort, event);
-  } catch { /* Port may have closed; buffered events replay on reconnect. */ }
+  recordPipelineEvents([event], true);
 }
 
 function flushConnectWaiters(port: chrome.runtime.Port | null): void {
@@ -122,11 +148,13 @@ chrome.runtime.onConnectExternal.addListener((port) => {
   }
   companionPort = port;
   companionTabId = port.sender?.tab?.id ?? null;
-  for (const event of recentPipelineEvents) {
-    try {
-      forwardPipelineEvent(port, event);
-    } catch { break; }
-  }
+  void loadPipelineEvents().then((events) => {
+    for (const event of events) {
+      try {
+        forwardPipelineEvent(port, event);
+      } catch { break; }
+    }
+  });
   flushConnectWaiters(port);
 
   port.onMessage.addListener((untrusted: unknown) => {
@@ -160,8 +188,19 @@ async function findExistingCompanionTab(): Promise<chrome.tabs.Tab | null> {
   }) ?? null;
 }
 
-async function ensureCompanionPort(openIfMissing: boolean): Promise<chrome.runtime.Port | null> {
-  if (companionPort) return companionPort;
+async function focusTabWindow(tab: chrome.tabs.Tab): Promise<void> {
+  if (tab.id !== undefined) await chrome.tabs.update(tab.id, { active: true }).catch(() => {});
+  if (tab.windowId !== undefined) await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+}
+
+async function ensureCompanionPort(openIfMissing: boolean, focusTab = false): Promise<chrome.runtime.Port | null> {
+  if (companionPort) {
+    if (focusTab && companionTabId !== null) {
+      const tab = await chrome.tabs.get(companionTabId).catch(() => null);
+      if (tab) await focusTabWindow(tab);
+    }
+    return companionPort;
+  }
   if (!openIfMissing) return null;
   if (connectAttempt) return connectAttempt;
   connectAttempt = (async () => {
@@ -170,10 +209,11 @@ async function ensureCompanionPort(openIfMissing: boolean): Promise<chrome.runti
       const existing = await findExistingCompanionTab();
       if (existing?.id !== undefined) {
         companionTabId = existing.id;
-        if (existing.url !== targetUrl) await chrome.tabs.update(existing.id, { url: targetUrl, active: false });
+        if (existing.url !== targetUrl) await chrome.tabs.update(existing.id, { url: targetUrl, active: focusTab });
+        else if (focusTab) await focusTabWindow(existing);
         else await chrome.tabs.reload(existing.id);
       } else {
-        const created = await chrome.tabs.create({ url: targetUrl, active: false });
+        const created = await chrome.tabs.create({ url: targetUrl, active: focusTab });
         companionTabId = created.id ?? null;
       }
       if (companionPort) return companionPort;
@@ -363,6 +403,17 @@ chrome.runtime.onMessage.addListener((untrusted: unknown, sender, sendResponse) 
     })();
     return true;
   }
+  if (message.type === "OPEN_COMPANION") {
+    void (async () => {
+      try {
+        const port = await ensureCompanionPort(true, message.focus !== false);
+        sendResponse({ connected: Boolean(port) });
+      } catch {
+        sendResponse({ connected: false });
+      }
+    })();
+    return true;
+  }
   if (message.type === "RUN_DIAGNOSIS") {
     void (async () => {
       try {
@@ -385,9 +436,7 @@ chrome.runtime.onMessage.addListener((untrusted: unknown, sender, sendResponse) 
           if (!await isTabCurrent(message.tabId, message.tabUrl)) { sendResponse({ stale: true }); return; }
           if (reply?.type === "DIAGNOSE_RESPONSE") {
             if (message.runId) {
-              for (const event of outcomeToPipelineEvents(message.runId, safeEvidence.origin, reply.outcome)) {
-                recentPipelineEvents = [...recentPipelineEvents, event].slice(-30);
-              }
+              recordPipelineEvents(outcomeToPipelineEvents(message.runId, safeEvidence.origin, reply.outcome), false);
             }
             sendResponse({ outcome: reply.outcome, companionConnected: true });
             return;

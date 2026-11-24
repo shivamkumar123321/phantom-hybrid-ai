@@ -44,10 +44,16 @@ export function updateHistoryVerification(
 
 export function isEntryUndoable(
   entry: RepairHistoryEntry,
-  liveContext: { origin: string | null; activeRepairId: string | null; activeState: RepairState | null },
+  liveContext: {
+    origin: string | null;
+    activeRepairId: string | null;
+    activeState: RepairState | null;
+    activeRepairIds?: readonly string[];
+  },
 ): boolean {
   if (entry.verificationResult === "undone") return false;
   if (liveContext.origin !== entry.origin) return false;
+  if (liveContext.activeRepairIds) return liveContext.activeRepairIds.includes(entry.id);
   if (liveContext.activeRepairId !== entry.id) return false;
   return liveContext.activeState === "pending" || liveContext.activeState === "verified";
 }

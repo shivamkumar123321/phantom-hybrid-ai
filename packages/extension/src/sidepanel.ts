@@ -33,6 +33,7 @@ const pageIssuesList = document.querySelector<HTMLUListElement>("#page-issues-li
 const scanPageButton = document.querySelector<HTMLButtonElement>("#scan-page")!;
 const fixAllSafeButton = document.querySelector<HTMLButtonElement>("#fix-all-safe")!;
 const undoAllButton = document.querySelector<HTMLButtonElement>("#undo-all")!;
+const openPipelineButton = document.querySelector<HTMLButtonElement>("#open-pipeline")!;
 const cloudConfirm = document.querySelector<HTMLElement>("#cloud-confirm")!;
 const cloudSummary = document.querySelector<HTMLElement>("#cloud-summary")!;
 const cloudRemember = document.querySelector<HTMLInputElement>("#cloud-remember")!;
@@ -57,6 +58,7 @@ let currentOrigin: string | null = null;
 let currentUrl: string | null = null;
 let currentTabId: number | null = null;
 let currentFailure: FailureView = null;
+let currentIssues: PageIssueSummary[] = [];
 let lastNote = "";
 let pendingConsent: { runId?: string; evidence: EvidencePacket; rulesFallback: Diagnosis } | null = null;
 
@@ -74,6 +76,14 @@ function renderFailure(view: FailureView): void {
     shareStatus.textContent = "";
     shareRecipe.hidden = true;
     return;
+  }
+  const heading = failureSection.querySelector<HTMLElement>("h2");
+  if (heading) {
+    heading.textContent = view.state === "verified"
+      ? "Verified Repair"
+      : view.state === "suspected"
+        ? "Suspected Failure"
+        : "Diagnosis & Repair";
   }
   if (view.state === "suspected") {
     lastNote = "";
@@ -121,6 +131,7 @@ function renderPicker(state: PickerState | null): void {
 }
 
 function renderPageIssues(issues: PageIssueSummary[]): void {
+  currentIssues = issues;
   pageIssuesList.replaceChildren();
   scanPageButton.disabled = !monitor.checked || !currentOrigin;
   pageIssuesCount.textContent = `${issues.length} found`;
@@ -171,6 +182,7 @@ function renderPageIssues(issues: PageIssueSummary[]): void {
           if (res?.error) throw new Error(res.error);
           if (res?.failure !== undefined) renderFailure(res.failure);
           if (res?.issues) renderPageIssues(res.issues);
+          if (res?.failure?.state === "suspected") investigate.click();
         } catch {
           failureStatus.textContent = "Could not inspect that element.";
         }
@@ -245,6 +257,14 @@ async function refreshCommunity(): Promise<void> {
 function renderHistory(entries: RepairHistoryEntry[]): void {
   historyList.replaceChildren();
   historyEmpty.hidden = entries.length > 0;
+  const activeRepairIds = [...new Set([
+    ...currentIssues
+      .filter((issue) => (issue.state === "pending" || issue.state === "verified") && Boolean(issue.repairId))
+      .map((issue) => issue.repairId as string),
+    ...(currentFailure?.repairId && (currentFailure.state === "pending" || currentFailure.state === "verified")
+      ? [currentFailure.repairId]
+      : []),
+  ])];
   for (const entry of entries) {
     const item = document.createElement("li");
     item.className = "history-item";
@@ -260,6 +280,7 @@ function renderHistory(entries: RepairHistoryEntry[]): void {
       origin: currentOrigin,
       activeRepairId: currentFailure?.repairId ?? null,
       activeState: currentFailure?.state ?? null,
+      activeRepairIds,
     });
     if (undoable) {
       const undoButton = document.createElement("button");
@@ -267,7 +288,14 @@ function renderHistory(entries: RepairHistoryEntry[]): void {
       undoButton.className = "history-undo";
       undoButton.textContent = "Undo";
       undoButton.addEventListener("click", () => {
-        void sendTabCommand("UNDO_REPAIR", renderFailure, () => { failureStatus.textContent = "Could not complete that action. Try again."; });
+        void sendTabCommand(
+          { type: "UNDO_REPAIR", repairId: entry.id },
+          (view: FailureView) => {
+            renderFailure(view);
+            void refreshPageIssues();
+          },
+          () => { failureStatus.textContent = "Could not complete that action. Try again."; },
+        );
       });
       item.append(undoButton);
     } else {
@@ -296,13 +324,21 @@ async function queryTabState<T>(type: "GET_FAILURE" | "GET_PICKER_STATE", applyS
   } catch { if (currentTabId === tabId) applyState(null); }
 }
 
-async function sendTabCommand<T>(type: "APPLY_REPAIR" | "UNDO_REPAIR" | "START_PICKING" | "CANCEL_PICKING", applyState: (value: T) => void, onError: () => void): Promise<void> {
+type TabCommand =
+  | "APPLY_REPAIR"
+  | "UNDO_REPAIR"
+  | "START_PICKING"
+  | "CANCEL_PICKING"
+  | { type: "UNDO_REPAIR"; repairId: string };
+
+async function sendTabCommand<T>(command: TabCommand, applyState: (value: T) => void, onError: () => void): Promise<void> {
   if (currentTabId === null) return;
+  const payload = typeof command === "string" ? { type: command } : command;
   try {
-    const result = await chrome.tabs.sendMessage(currentTabId, { type });
+    const result = await chrome.tabs.sendMessage(currentTabId, payload);
     if (result?.error) throw new Error(result.error);
     applyState(result as T);
-    if (type === "APPLY_REPAIR" || type === "UNDO_REPAIR") void refreshHistory();
+    if (payload.type === "APPLY_REPAIR" || payload.type === "UNDO_REPAIR") void refreshHistory();
   } catch { onError(); }
 }
 
@@ -435,6 +471,7 @@ fixAllSafeButton.addEventListener("click", () => {
       if (res?.failure !== undefined) renderFailure(res.failure);
       if (res?.issues) renderPageIssues(res.issues);
       void refreshHistory();
+      void chrome.runtime.sendMessage({ type: "OPEN_COMPANION", focus: false }).catch(() => {});
     } catch {
       status.textContent = "Reload this webpage once so PHANTOM can connect to it.";
     } finally {
@@ -457,6 +494,9 @@ undoAllButton.addEventListener("click", () => {
       undoAllButton.disabled = false;
     }
   })();
+});
+openPipelineButton.addEventListener("click", () => {
+  void chrome.runtime.sendMessage({ type: "OPEN_COMPANION", focus: true }).catch(() => {});
 });
 
 async function showStatus(origin: string, enabled: boolean): Promise<void> {

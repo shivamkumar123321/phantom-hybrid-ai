@@ -28,12 +28,12 @@ export type PickerState = { active: boolean; notice: string | null };
 export type PageIssueSummary = {
   id: string;
   kind: FailureKind;
-  tagName: string;
   label: string;
   reason: string;
   action: z.infer<typeof repairAction>;
   state: RepairState;
   canAutoRepair: boolean;
+  repairId?: string | null;
 };
 
 export function siteOrigin(url: string): string | null {

@@ -1,6 +1,7 @@
 import {
   createHistoryEntry,
   createPipelineEvent,
+  isAllowedCompanionOrigin,
   monitoringKey,
   repairCommand,
   sanitizeEvidence,
@@ -85,12 +86,12 @@ function summarizePageIssues(): PageIssueSummary[] {
     summaries.push({
       id,
       kind: issue.kind,
-      tagName: issue.target.tagName.toLowerCase(),
       label: issue.label,
       reason: issue.diagnosis.reason,
       action: issue.diagnosis.action,
       state: issue.state,
       canAutoRepair: issue.diagnosis.action !== "NO_SAFE_REPAIR",
+      repairId: issue.repairId ?? null,
     });
   }
   return summaries;
@@ -246,13 +247,13 @@ function refreshPageScan(options: { autoSelectImages?: boolean; notify?: boolean
     const issue = upsertPageIssue(item);
     if (!existed) {
       changed = true;
+      emitPipeline(issue, "detection", "done", `Suspected ${item.kind} failure detected`);
       if (item.kind === "image" && !firstNewImage) firstNewImage = issue;
     }
   }
 
   if (options.autoSelectImages && firstNewImage && (!failure || !failure.target.isConnected || failure.state === "undone")) {
     focusIssue(firstNewImage);
-    emitPipeline(firstNewImage, "detection", "done", "Suspected image failure detected");
     changed = true;
   }
 
@@ -294,14 +295,19 @@ function watchRepairedClick(target: HTMLElement): void {
   const beforeHref = location.href;
   let mutated = false;
   const observer = new MutationObserver(() => { mutated = true; });
-  observer.observe(target.parentElement ?? document.body ?? target, { childList: true, characterData: true, subtree: true });
+  observer.observe(document.body ?? target, {
+    childList: true,
+    characterData: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["aria-expanded", "aria-pressed", "aria-checked", "aria-selected", "hidden", "open", "class"],
+  });
   window.setTimeout(() => {
     observer.disconnect();
-    if (current.target === target && current.state === "pending") {
-      const unblocked = getComputedStyle(target).pointerEvents !== "none";
-      if (mutated || location.href !== beforeHref || unblocked) verifyIssue(current);
+    if (current.target === target && current.state === "pending" && (mutated || location.href !== beforeHref)) {
+      verifyIssue(current);
     }
-  }, 200);
+  }, 300);
 }
 
 function expectedOutcome(target: HTMLElement): Element | null {
@@ -459,7 +465,10 @@ function applyRepair(current: Failure): string | null {
   current.state = "pending";
   current.repairId = crypto.randomUUID();
   outline(current.target, "#eab308");
-  if (origin) {
+  if (origin && isAllowedCompanionOrigin(origin)) {
+  document.documentElement.dataset.phantomExtId = chrome.runtime.id;
+  window.dispatchEvent(new CustomEvent("phantom-extension-ready", { detail: { extensionId: chrome.runtime.id } }));
+} else if (origin) {
     const entry = createHistoryEntry({
       id: current.repairId,
       origin,
@@ -532,7 +541,10 @@ function stopDomWatcher(): void {
   domObserver = null;
 }
 
-if (origin) {
+if (origin && isAllowedCompanionOrigin(origin)) {
+  document.documentElement.dataset.phantomExtId = chrome.runtime.id;
+  window.dispatchEvent(new CustomEvent("phantom-extension-ready", { detail: { extensionId: chrome.runtime.id } }));
+} else if (origin) {
   chrome.runtime.sendMessage({ type: "GET_MONITORING", origin }).then((state: { enabled?: boolean }) => {
     enabled = state.enabled === true;
     if (enabled) {
@@ -606,7 +618,6 @@ if (origin) {
         sendResponse({ error: "Issue no longer exists on this page." });
         return false;
       }
-      if (targetIssue.state === "suspected") targetIssue.state = "preview";
       focusIssue(targetIssue);
       sendResponse({ failure: visibleState(), issues: summarizePageIssues() });
       announce();
@@ -616,14 +627,24 @@ if (origin) {
       if (!enabled) { sendResponse({ error: "Monitoring is off" }); return false; }
       refreshPageScan({ autoSelectImages: false });
       let repairedCount = 0;
+      let lastRepaired: Failure | null = null;
       for (const issue of pageIssues.values()) {
         if (!issue.target.isConnected) continue;
         if ((issue.state === "suspected" || issue.state === "preview" || issue.state === "undone") && issue.diagnosis.action !== "NO_SAFE_REPAIR") {
+          issue.runId = crypto.randomUUID();
           issue.state = "preview";
+          emitPipeline(issue, "detection", "done", `Suspected ${issue.kind} failure detected`);
+          emitPipeline(issue, "evidence", "done", "Sanitized page metadata ready");
+          emitPipeline(issue, "routing", "done", "Bulk safe repair (rules-only)", issue.diagnosis.source, "RULES_ONLY");
+          emitPipeline(issue, "diagnosis", "done", `${issue.diagnosis.action} (${issue.diagnosis.source})`, issue.diagnosis.source, "RULES_ONLY");
           const err = applyRepair(issue);
-          if (!err) repairedCount++;
+          if (!err) {
+            repairedCount++;
+            lastRepaired = issue;
+          }
         }
       }
+      if (lastRepaired) focusIssue(lastRepaired);
       sendResponse({ failure: visibleState(), issues: summarizePageIssues(), repairedCount });
       announce();
       return false;
@@ -687,6 +708,17 @@ if (origin) {
       emitPipeline(issue, "diagnosis", "done", resolved.diagnosis.action, "rules-only", "RULES_ONLY");
       const error = applyRepair(issue);
       if (error) { restoreOutline(issue); failure = null; sendResponse({ error }); return false; }
+      sendResponse(visibleState());
+      announce();
+      return false;
+    }
+    if (parsed.data.type === "UNDO_REPAIR" && parsed.data.repairId) {
+      const requestedRepairId = parsed.data.repairId;
+      const match = [...pageIssues.values()].find((item) => item.repairId === requestedRepairId && item.target.isConnected);
+      const targetIssue = match ?? (failure?.target.isConnected ? failure : null);
+      if (!targetIssue) { sendResponse({ error: "No active repair to undo" }); return false; }
+      const error = undoRepair(targetIssue);
+      if (error) { sendResponse({ error }); return false; }
       sendResponse(visibleState());
       announce();
       return false;

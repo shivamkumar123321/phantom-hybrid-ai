@@ -34,8 +34,20 @@ const stageCoords: Record<PipelineStage, { x: number; y: number }> = {
   history: { x: 535, y: 235 },
 };
 
+function eventKey(event: PipelineEvent): string {
+  return `${event.runId}:${event.stage}:${event.status}:${event.timestamp}`;
+}
+
+function readExtensionId(): string {
+  const fromQuery = new URLSearchParams(location.search).get("ext") ?? "";
+  if (/^[a-p]{32}$/.test(fromQuery)) return fromQuery;
+  const fromDom = document.documentElement.dataset.phantomExtId ?? "";
+  return /^[a-p]{32}$/.test(fromDom) ? fromDom : "";
+}
+
 export function App() {
   const [env, setEnv] = useState<AiEnvironmentStatus>(UNAVAILABLE_AI_ENV);
+  const [extensionId, setExtensionId] = useState<string>(() => readExtensionId());
   const [bridgeStatus, setBridgeStatus] = useState("Waiting for extension connection…");
   const [downloadStatus, setDownloadStatus] = useState("");
   const [lastRoute, setLastRoute] = useState("No diagnosis requests yet.");
@@ -43,7 +55,18 @@ export function App() {
   const [selectedStage, setSelectedStage] = useState<PipelineStage | null>(null);
 
   const appendEvents = (incoming: PipelineEvent[]) => {
-    setEvents((prev) => [...prev, ...incoming].slice(-40));
+    setEvents((prev) => {
+      const seen = new Set(prev.map(eventKey));
+      const merged = [...prev];
+      for (const event of incoming) {
+        const key = eventKey(event);
+        if (!seen.has(key)) {
+          seen.add(key);
+          merged.push(event);
+        }
+      }
+      return merged.slice(-40);
+    });
   };
 
   const refreshStatus = async (): Promise<AiEnvironmentStatus> => {
@@ -54,83 +77,111 @@ export function App() {
 
   useEffect(() => {
     void refreshStatus();
-    const extensionId = new URLSearchParams(location.search).get("ext") ?? "";
-    if (!/^[a-p]{32}$/.test(extensionId) || typeof chrome === "undefined" || !chrome.runtime?.connect) {
-      setBridgeStatus("Standby: open this companion through the PHANTOM extension.");
-      return;
-    }
-    let port: chrome.runtime.Port;
-    try {
-      port = chrome.runtime.connect(extensionId, { name: "phantom-companion" });
-    } catch {
-      setBridgeStatus("Could not connect to the PHANTOM extension.");
-      return;
-    }
-    setBridgeStatus("Connected securely to the PHANTOM extension.");
-    port.onMessage.addListener((untrusted: unknown) => {
-      const parsed = companionRequest.safeParse(untrusted);
-      if (!parsed.success) return;
-      const req = parsed.data;
-      if (req.type === "GET_AI_STATUS") {
-        void refreshStatus().then((latest) => {
-          port.postMessage({ id: req.id, type: "AI_STATUS_RESPONSE", env: latest } satisfies CompanionResponse);
-        });
-        return;
-      }
-      if (req.type === "PIPELINE_EVENT") {
-        appendEvents([req.event]);
-        return;
-      }
-      if (req.type === "SHARE_RECIPE") {
-        void shareCommunityRecipe(req.recipe).then((res) => {
-          port.postMessage({
-            id: req.id,
-            type: "SHARE_RECIPE_RESPONSE",
-            ok: res.ok,
-            recipe: res.ok ? res.recipe : undefined,
-            error: res.ok ? undefined : res.error,
-          } satisfies CompanionResponse);
-        });
-        return;
-      }
-      if (req.type === "GET_COMMUNITY_RECIPES") {
-        void fetchCommunityRecipes(req.origin).then((res) => {
-          port.postMessage({
-            id: req.id,
-            type: "COMMUNITY_RECIPES_RESPONSE",
-            recipes: res.recipes,
-            available: res.available,
-          } satisfies CompanionResponse);
-        });
-        return;
-      }
-      void (async () => {
-        const latest = await refreshStatus();
-        const runId = req.runId ?? crypto.randomUUID();
-        const outcome = await resolveDiagnosisOutcome({
-          evidence: req.evidence,
-          rulesFallback: req.rulesFallback,
-          env: latest,
-          cloudConsent: req.cloudConsent,
-          cloudDecision: req.cloudDecision,
-          runModel: runHybridModel,
-        });
-        appendEvents(outcomeToPipelineEvents(runId, req.evidence.origin, outcome));
-        setLastRoute(
-          outcome.status === "needs-cloud-consent"
-            ? `Waiting for user permission before Cloud AI check on ${req.evidence.origin}.`
-            : `Last check (${outcome.diagnosis.source}): ${outcome.note}`,
-        );
-        port.postMessage({ id: req.id, type: "DIAGNOSE_RESPONSE", outcome } satisfies CompanionResponse);
-      })();
-    });
-    port.onDisconnect.addListener(() => {
-      setBridgeStatus("Extension connection closed.");
-    });
-    return () => {
-      try { port.disconnect(); } catch { /* Already disconnected. */ }
+    const onReady = (ev: Event) => {
+      const id = (ev as CustomEvent<{ extensionId?: string }>).detail?.extensionId ?? readExtensionId();
+      if (/^[a-p]{32}$/.test(id)) setExtensionId(id);
     };
-  }, []);
+    window.addEventListener("phantom-extension-ready", onReady);
+    const id = readExtensionId();
+    if (id && id !== extensionId) setExtensionId(id);
+    return () => { window.removeEventListener("phantom-extension-ready", onReady); };
+  }, [extensionId]);
+
+  useEffect(() => {
+    if (!extensionId || typeof chrome === "undefined" || !chrome.runtime?.connect) {
+      setBridgeStatus("Standby: load PHANTOM in Chrome and refresh this page to connect.");
+      return;
+    }
+
+    let disposed = false;
+    let activePort: chrome.runtime.Port | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const connect = () => {
+      if (disposed) return;
+      let port: chrome.runtime.Port;
+      try {
+        port = chrome.runtime.connect(extensionId, { name: "phantom-companion" });
+      } catch {
+        setBridgeStatus("Could not connect to the PHANTOM extension. Retrying…");
+        retryTimer = setTimeout(connect, 1000);
+        return;
+      }
+      activePort = port;
+      setBridgeStatus("Connected securely to the PHANTOM extension.");
+
+      port.onMessage.addListener((untrusted: unknown) => {
+        const parsed = companionRequest.safeParse(untrusted);
+        if (!parsed.success) return;
+        const req = parsed.data;
+        if (req.type === "GET_AI_STATUS") {
+          void refreshStatus().then((latest) => {
+            port.postMessage({ id: req.id, type: "AI_STATUS_RESPONSE", env: latest } satisfies CompanionResponse);
+          });
+          return;
+        }
+        if (req.type === "PIPELINE_EVENT") {
+          appendEvents([req.event]);
+          return;
+        }
+        if (req.type === "SHARE_RECIPE") {
+          void shareCommunityRecipe(req.recipe).then((res) => {
+            port.postMessage({
+              id: req.id,
+              type: "SHARE_RECIPE_RESPONSE",
+              ok: res.ok,
+              recipe: res.ok ? res.recipe : undefined,
+              error: res.ok ? undefined : res.error,
+            } satisfies CompanionResponse);
+          });
+          return;
+        }
+        if (req.type === "GET_COMMUNITY_RECIPES") {
+          void fetchCommunityRecipes(req.origin).then((res) => {
+            port.postMessage({
+              id: req.id,
+              type: "COMMUNITY_RECIPES_RESPONSE",
+              recipes: res.recipes,
+              available: res.available,
+            } satisfies CompanionResponse);
+          });
+          return;
+        }
+        void (async () => {
+          const latest = await refreshStatus();
+          const runId = req.runId ?? crypto.randomUUID();
+          const outcome = await resolveDiagnosisOutcome({
+            evidence: req.evidence,
+            rulesFallback: req.rulesFallback,
+            env: latest,
+            cloudConsent: req.cloudConsent,
+            cloudDecision: req.cloudDecision,
+            runModel: runHybridModel,
+          });
+          appendEvents(outcomeToPipelineEvents(runId, req.evidence.origin, outcome));
+          setLastRoute(
+            outcome.status === "needs-cloud-consent"
+              ? `Waiting for user permission before Cloud AI check on ${req.evidence.origin}.`
+              : `Last check (${outcome.diagnosis.source}): ${outcome.note}`,
+          );
+          port.postMessage({ id: req.id, type: "DIAGNOSE_RESPONSE", outcome } satisfies CompanionResponse);
+        })();
+      });
+
+      port.onDisconnect.addListener(() => {
+        if (disposed) return;
+        setBridgeStatus("Extension paused — reconnecting automatically…");
+        retryTimer = setTimeout(connect, 1000);
+      });
+    };
+
+    connect();
+    return () => {
+      disposed = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      try { activePort?.disconnect(); } catch { /* Already disconnected. */ }
+    };
+  }, [extensionId]);
 
   const handleEnableLocal = async () => {
     setDownloadStatus("Starting on-device model download…");
@@ -148,6 +199,10 @@ export function App() {
 
   const labels = formatAiAvailability(env);
   const summary = useMemo(() => reducePipelineRun(events), [events]);
+  const awaitingConsent = summary.route === "needs-consent";
+  const onDeviceActive = !awaitingConsent && summary.source === "on-device";
+  const cloudActive = awaitingConsent || summary.source === "cloud";
+  const rulesActive = !awaitingConsent && summary.source === "rules-only";
 
   const nodes: Node[] = useMemo(() => {
     const stageNodes: Node[] = PIPELINE_STAGES.map((stage) => {
@@ -177,10 +232,6 @@ export function App() {
       };
     });
 
-    const onDeviceActive = summary.route === "ONLY_ON_DEVICE" || summary.route === "PREFER_ON_DEVICE";
-    const cloudActive = summary.route === "ONLY_IN_CLOUD" || summary.route === "needs-consent";
-    const rulesActive = summary.route === "RULES_ONLY";
-
     const branchNodes: Node[] = [
       {
         id: "route-on-device",
@@ -188,15 +239,15 @@ export function App() {
         sourcePosition: Position.Right,
         targetPosition: Position.Left,
         style: { width: 140, padding: 6, borderRadius: 8, background: "#131726", color: "#e5e7eb", border: `2px solid ${onDeviceActive ? "#16a34a" : "#334155"}` },
-        data: { label: <div className="stage-node"><div className="stage-title">On-Device AI</div><div className="stage-status">{labels.local}</div></div> },
+        data: { label: <div className="stage-node"><div className="stage-title">On-Device AI</div><div className="stage-status">{onDeviceActive ? "active" : labels.local}</div></div> },
       },
       {
         id: "route-cloud",
         position: { x: 535, y: 95 },
         sourcePosition: Position.Right,
         targetPosition: Position.Left,
-        style: { width: 140, padding: 6, borderRadius: 8, background: "#131726", color: "#e5e7eb", border: `2px solid ${summary.route === "needs-consent" ? "#eab308" : cloudActive ? "#16a34a" : "#334155"}` },
-        data: { label: <div className="stage-node"><div className="stage-title">Cloud AI (Consent)</div><div className="stage-status">{summary.route === "needs-consent" ? "awaiting consent" : labels.cloud}</div></div> },
+        style: { width: 140, padding: 6, borderRadius: 8, background: "#131726", color: "#e5e7eb", border: `2px solid ${awaitingConsent ? "#eab308" : cloudActive ? "#16a34a" : "#334155"}` },
+        data: { label: <div className="stage-node"><div className="stage-title">Cloud AI (Consent)</div><div className="stage-status">{awaitingConsent ? "awaiting consent" : cloudActive ? "active" : labels.cloud}</div></div> },
       },
       {
         id: "route-rules",
@@ -208,22 +259,22 @@ export function App() {
       },
     ];
     return [...stageNodes, ...branchNodes];
-  }, [summary, labels]);
+  }, [summary, labels, onDeviceActive, cloudActive, rulesActive, awaitingConsent]);
 
   const edges: Edge[] = useMemo(() => [
     { id: "detection->evidence", source: "detection", target: "evidence" },
     { id: "evidence->routing", source: "evidence", target: "routing" },
-    { id: "routing->on-device", source: "routing", target: "route-on-device", animated: summary.route === "ONLY_ON_DEVICE" || summary.route === "PREFER_ON_DEVICE" },
-    { id: "routing->cloud", source: "routing", target: "route-cloud", animated: summary.route === "ONLY_IN_CLOUD" || summary.route === "needs-consent" },
-    { id: "routing->rules", source: "routing", target: "route-rules", animated: summary.route === "RULES_ONLY" },
-    { id: "on-device->diagnosis", source: "route-on-device", target: "diagnosis" },
-    { id: "cloud->diagnosis", source: "route-cloud", target: "diagnosis" },
-    { id: "rules->diagnosis", source: "route-rules", target: "diagnosis" },
+    { id: "routing->on-device", source: "routing", target: "route-on-device", animated: onDeviceActive },
+    { id: "routing->cloud", source: "routing", target: "route-cloud", animated: cloudActive },
+    { id: "routing->rules", source: "routing", target: "route-rules", animated: rulesActive },
+    { id: "on-device->diagnosis", source: "route-on-device", target: "diagnosis", animated: onDeviceActive },
+    { id: "cloud->diagnosis", source: "route-cloud", target: "diagnosis", animated: cloudActive },
+    { id: "rules->diagnosis", source: "route-rules", target: "diagnosis", animated: rulesActive },
     { id: "diagnosis->approval", source: "diagnosis", target: "approval" },
     { id: "approval->repair", source: "approval", target: "repair" },
     { id: "repair->verification", source: "repair", target: "verification", animated: summary.stages.verification.status === "waiting" },
     { id: "verification->history", source: "verification", target: "history" },
-  ], [summary]);
+  ], [summary, onDeviceActive, cloudActive, rulesActive]);
 
   const inspected = selectedStage ? summary.stages[selectedStage] : null;
   const routeLabel = summary.route ?? "idle";
@@ -262,12 +313,31 @@ export function App() {
           <span id="source-badge" className="badge">AI Source: {sourceLabel}</span>
           <span id="model-badge" className="badge">{labels.local} · {labels.cloud}</span>
         </div>
-        <p id="last-route">{lastRoute}</p>
+        <p id="last-route" aria-live="polite">{lastRoute}</p>
+        <div className="stage-pills" role="group" aria-label="Pipeline stages">
+          {PIPELINE_STAGES.map((stage) => {
+            const snap = summary.stages[stage.id];
+            return (
+              <button
+                key={stage.id}
+                type="button"
+                className="stage-pill"
+                data-status={snap.status}
+                aria-pressed={selectedStage === stage.id}
+                onClick={() => setSelectedStage(stage.id)}
+              >
+                {stage.label}
+              </button>
+            );
+          })}
+        </div>
         <div className="pipeline-flow">
           <ReactFlow
             nodes={nodes}
             edges={edges}
             fitView
+            minZoom={0.4}
+            maxZoom={1.6}
             nodesDraggable={false}
             nodesConnectable={false}
             onNodeClick={(_event, node) => {
@@ -279,9 +349,18 @@ export function App() {
           </ReactFlow>
         </div>
         {inspected && selectedStage && (
-          <div id="stage-inspector" className="inspector">
+          <div id="stage-inspector" className="inspector" aria-live="polite">
             <strong>{PIPELINE_STAGES.find((s) => s.id === selectedStage)?.label}</strong> — {inspected.status}: {inspected.detail}
           </div>
+        )}
+        {summary.recentEvents.length > 0 && (
+          <ul id="pipeline-event-log" className="event-log" aria-live="polite">
+            {summary.recentEvents.slice().reverse().map((event) => (
+              <li key={eventKey(event)}>
+                <strong>{event.stage}</strong> ({event.status}) — {event.detail}
+              </li>
+            ))}
+          </ul>
         )}
       </section>
     </main>

@@ -21,6 +21,7 @@ export const monitoringMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("GET_CLOUD_CONSENT"), origin: z.string().url() }),
   z.object({ type: z.literal("SET_CLOUD_CONSENT"), origin: z.string().url(), consent: cloudConsent }),
   z.object({ type: z.literal("GET_COMPANION_STATUS") }),
+  z.object({ type: z.literal("OPEN_COMPANION"), focus: z.boolean().optional() }),
   z.object({
     type: z.literal("RUN_DIAGNOSIS"),
     runId: z.string().min(1).optional(),
@@ -56,7 +57,7 @@ export const repairCommand = z.discriminatedUnion("type", [
   z.object({ type: z.literal("GET_FAILURE") }),
   z.object({ type: z.literal("INVESTIGATE") }),
   z.object({ type: z.literal("APPLY_REPAIR") }),
-  z.object({ type: z.literal("UNDO_REPAIR") }),
+  z.object({ type: z.literal("UNDO_REPAIR"), repairId: z.string().min(1).optional() }),
   z.object({ type: z.literal("GET_PICKER_STATE") }),
   z.object({ type: z.literal("START_PICKING") }),
   z.object({ type: z.literal("CANCEL_PICKING") }),

@@ -1,10 +1,11 @@
 import { test, expect, chromium } from "@playwright/test";
+import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { resolve, sep } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 
-test("proactively scans external sites without data-phantom-* attributes, fixes all safe bugs, and undoes cleanly", async () => {
+test("proactively scans external sites, auto-connects live pipeline without ?ext=, fixes all safe bugs, and undoes cleanly", async () => {
   const extensionPath = resolve("packages/extension/dist");
   const profile = await mkdtemp(resolve(tmpdir(), "phantom-external-"));
   const port = 49000 + Math.floor(Math.random() * 500);
@@ -39,6 +40,11 @@ test("proactively scans external sites without data-phantom-* attributes, fixes 
   });
   await new Promise<void>((done) => server.listen(port, "127.0.0.1", done));
 
+  const companionServer = spawn(process.execPath, [resolve("packages/companion/server.mjs")], {
+    env: { ...process.env, PORT: "4174" },
+    stdio: "ignore",
+  });
+
   const context = await chromium.launchPersistentContext(profile, {
     channel: "chromium",
     headless: true,
@@ -46,6 +52,11 @@ test("proactively scans external sites without data-phantom-* attributes, fixes 
   });
 
   try {
+    for (let attempt = 0; attempt < 30; attempt++) {
+      try { if ((await fetch("http://127.0.0.1:4174")).ok) break; } catch {}
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
     let worker = context.serviceWorkers().find((candidate) => candidate.url().endsWith("/background.js"));
     if (!worker) worker = await context.waitForEvent("serviceworker", { predicate: (candidate) => candidate.url().endsWith("/background.js") });
     const extensionId = new URL(worker.url()).host;
@@ -61,6 +72,11 @@ test("proactively scans external sites without data-phantom-* attributes, fixes 
       // Enable monitoring BEFORE opening the side panel so FAILURE_UPDATED fires with no panel listening
       await chrome.storage.local.set({ [`monitoring:${origin}`]: true });
     }, `http://127.0.0.1:${port}`);
+
+    // Open Companion directly WITHOUT ?ext= — content script must auto-discover extension ID and connect
+    const companion = await context.newPage();
+    await companion.goto("http://127.0.0.1:4174/", { waitUntil: "networkidle" });
+    await expect(companion.locator("#bridge-status")).toContainText("Connected securely");
 
     const extPage = await context.newPage();
     await extPage.goto(`http://127.0.0.1:${port}`, { waitUntil: "networkidle" });
@@ -87,6 +103,19 @@ test("proactively scans external sites without data-phantom-* attributes, fixes 
     await expect(extPage.locator("#ext-blocked-link")).toHaveCSS("pointer-events", "auto");
     await expect(extPage.locator("#ext-submit")).toHaveAttribute("type", "submit");
 
+    // Live Pipeline shows all 8 stages done + truthful Rules-Only active route + live event log
+    await expect(companion.locator("#routing-badge")).toContainText("RULES_ONLY");
+    await expect(companion.locator("#source-badge")).toContainText("rules-only");
+    await expect(companion.locator('.react-flow__node[data-id="route-rules"]')).toContainText("active");
+    for (const stage of ["detection", "evidence", "routing", "diagnosis", "approval", "repair", "verification", "history"]) {
+      await expect(companion.locator(`.react-flow__node[data-id="${stage}"]`)).toContainText("done");
+    }
+    await expect(companion.locator("#pipeline-event-log")).toBeVisible();
+
+    // Every bulk-repaired item in local Repair History keeps Undo available
+    await expect(panel.locator("#history-list .history-item")).toHaveCount(4);
+    await expect(panel.locator("#history-list .history-undo")).toHaveCount(4);
+
     // Undo all restores original broken attributes cleanly
     await expect(panel.locator("#undo-all")).toBeVisible();
     await panel.locator("#undo-all").click();
@@ -98,6 +127,7 @@ test("proactively scans external sites without data-phantom-* attributes, fixes 
   } finally {
     await context.close();
     server.close();
+    companionServer.kill();
     if (resolve(profile).startsWith(resolve(tmpdir()) + sep)) await rm(profile, { recursive: true, force: true });
   }
 });
