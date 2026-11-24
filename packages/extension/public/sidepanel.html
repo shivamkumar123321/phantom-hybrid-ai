@@ -1,38 +1,54 @@
 <!doctype html>
 <html lang="en">
-  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PHANTOM</title><link rel="stylesheet" href="sidepanel.css"></head>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>PHANTOM</title>
+    <link rel="stylesheet" href="sidepanel.css">
+  </head>
   <body>
     <main>
-      <h1>PHANTOM</h1>
-      <p id="site">Checking this tab…</p>
-      <label class="switch"><input id="monitor" type="checkbox" disabled><span>Monitor this site</span></label>
-      <p id="status" role="status" aria-live="polite"></p>
-      <label class="consent-row" for="cloud-consent">
-        <span>Cloud AI permission</span>
-        <select id="cloud-consent" disabled>
-          <option value="ask">Ask each time</option>
-          <option value="granted">Allow for this site</option>
-          <option value="denied">Never for this site</option>
-        </select>
-      </label>
-      <p id="ai-status" role="status" aria-live="polite">AI status: checking…</p>
-      <div id="picker-controls">
-        <button id="pick" type="button" disabled>Something is broken</button>
-        <button id="cancel-pick" type="button" hidden>Cancel picking</button>
-        <p id="picker-status" role="status" aria-live="polite"></p>
-      </div>
-      <section id="cloud-confirm" hidden aria-live="polite">
-        <h2>Allow Cloud AI check?</h2>
-        <p>PHANTOM will only send cleaned-up page details below. Passwords, tokens, cookies, and emails are removed.</p>
-        <p id="cloud-summary"></p>
-        <label class="remember-row"><input id="cloud-remember" type="checkbox"><span>Remember for this site</span></label>
-        <button id="cloud-approve" type="button">Ask Cloud AI</button>
-        <button id="cloud-decline" type="button">Use rules only</button>
+      <header class="brand-header">
+        <img class="brand-logo" src="logo.svg" alt="" width="30" height="30">
+        <h1>PHANTOM</h1>
+      </header>
+
+      <p id="site" class="site-chip">Checking this tab…</p>
+
+      <section class="glass-card">
+        <label class="switch" for="monitor">
+          <span class="switch-title">Monitor this site</span>
+          <input id="monitor" type="checkbox" disabled>
+        </label>
+        <p id="status" class="status-text" role="status" aria-live="polite"></p>
+        <p id="ai-status" class="ai-badge" role="status" aria-live="polite">AI status: checking…</p>
+        <div id="picker-controls">
+          <div class="btn-row">
+            <button id="pick" class="btn btn-primary" type="button" disabled>Something is broken</button>
+            <button id="cancel-pick" class="btn btn-ghost" type="button" hidden>Cancel picking</button>
+          </div>
+          <p id="picker-status" class="status-text" role="status" aria-live="polite"></p>
+        </div>
       </section>
-      <section id="failure" hidden aria-live="polite">
+
+      <section id="cloud-confirm" class="glass-card glass-accent" hidden aria-live="polite">
+        <h2>Allow Cloud AI check?</h2>
+        <p class="card-copy">PHANTOM will only send cleaned-up page details below. Passwords, tokens, cookies, and emails are removed.</p>
+        <p id="cloud-summary" class="summary-inset"></p>
+        <label class="remember-row" for="cloud-remember">
+          <input id="cloud-remember" type="checkbox">
+          <span>Remember for this site</span>
+        </label>
+        <div class="btn-row">
+          <button id="cloud-approve" class="btn btn-primary" type="button">Ask Cloud AI</button>
+          <button id="cloud-decline" class="btn btn-ghost" type="button">Use rules only</button>
+        </div>
+      </section>
+
+      <section id="failure" class="glass-card glass-warn" hidden aria-live="polite">
         <h2>Suspected Failure</h2>
-        <p id="failure-status"></p>
-        <div id="diagnosis" hidden>
+        <p id="failure-status" class="card-copy"></p>
+        <div id="diagnosis" class="diagnosis-box" hidden>
           <p id="reason"></p>
           <p id="confidence"></p>
           <p id="source"></p>
@@ -40,23 +56,39 @@
           <p id="action"></p>
           <p id="safety"></p>
         </div>
-        <button id="investigate" type="button">Investigate</button>
-        <button id="apply" type="button" hidden>Apply Repair</button>
-        <button id="undo" type="button" hidden>Undo</button>
-        <button id="share-recipe" type="button" hidden>Share Repair Recipe</button>
-        <p id="share-status" role="status" aria-live="polite"></p>
+        <div class="btn-row">
+          <button id="investigate" class="btn btn-primary" type="button">Investigate</button>
+          <button id="apply" class="btn btn-primary" type="button" hidden>Apply Repair</button>
+          <button id="undo" class="btn btn-danger" type="button" hidden>Undo</button>
+          <button id="share-recipe" class="btn btn-ghost" type="button" hidden>Share Repair Recipe</button>
+        </div>
+        <p id="share-status" class="status-text" role="status" aria-live="polite"></p>
       </section>
-      <section id="community">
+
+      <section class="glass-card">
+        <label class="consent-row" for="cloud-consent">
+          <span>Cloud AI permission</span>
+          <select id="cloud-consent" disabled>
+            <option value="ask">Ask each time</option>
+            <option value="granted">Allow for this site</option>
+            <option value="denied">Never for this site</option>
+          </select>
+        </label>
+      </section>
+
+      <section id="community" class="glass-card">
         <h2>Community</h2>
-        <p id="community-status"></p>
-        <p id="community-empty">No community Repair Recipes for this site yet.</p>
+        <p id="community-status" class="status-text" role="status" aria-live="polite"></p>
+        <p id="community-empty" class="empty-text">No community Repair Recipes for this site yet.</p>
         <ul id="community-list"></ul>
       </section>
-      <section id="history">
+
+      <section id="history" class="glass-card">
         <h2>Repair History</h2>
-        <p id="history-empty">No repairs recorded yet.</p>
+        <p id="history-empty" class="empty-text">No repairs recorded yet.</p>
         <ul id="history-list"></ul>
       </section>
+
       <p class="note">Monitoring is off on new sites. Password, payment, login, and security controls are always skipped.</p>
     </main>
     <script src="sidepanel.js"></script>

@@ -38,6 +38,10 @@ if (companionOrigin) {
 }
 await writeFile(join(root, "dist", "manifest.json"), JSON.stringify(manifest, null, 2));
 
-for (const name of ["sidepanel.html", "sidepanel.css"]) {
+for (const name of ["sidepanel.html", "sidepanel.css", "logo.svg"]) {
   await copyFile(join(root, "public", name), join(root, "dist", name));
+}
+await mkdir(join(root, "dist", "icons"), { recursive: true });
+for (const size of [16, 32, 48, 128]) {
+  await copyFile(join(root, "public", "icons", `icon-${size}.png`), join(root, "dist", "icons", `icon-${size}.png`));
 }

@@ -232,7 +232,10 @@ export function App() {
   return (
     <main>
       <header>
-        <h1>PHANTOM AI Companion</h1>
+        <div className="brand-row">
+          <img src="favicon.svg" alt="" width={32} height={32} />
+          <h1>PHANTOM AI Companion</h1>
+        </div>
         <p className="subtitle">Runs on-device and cloud diagnosis checks and visualizes the live pipeline.</p>
       </header>
 

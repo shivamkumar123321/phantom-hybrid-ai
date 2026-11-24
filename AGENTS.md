@@ -2,6 +2,7 @@
 
 - Always follow `.agents/skills/bro/SKILL.md`: reply in plain, everyday human language with no jargon, like one human talking to another.
 - Ask only **one question at a time** — never batch multiple questions into a single message.
+- Never show raw HTML code in replies or link to raw `.html` source files when presenting a UI, page, or prototype — always show the rendered visual end result directly (for example, via an inline HTML embed/artifact or a live browser preview).
 - Always follow these rules while asking any question or giving any kind of answer.
 
 ## Agent skills

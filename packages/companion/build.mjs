@@ -23,10 +23,11 @@ await build({
     "process.env.VITE_FIREBASE_PROJECT_ID": JSON.stringify(process.env.VITE_FIREBASE_PROJECT_ID ?? ""),
     "process.env.VITE_FIREBASE_APP_ID": JSON.stringify(process.env.VITE_FIREBASE_APP_ID ?? ""),
     "process.env.VITE_RECAPTCHA_SITE_KEY": JSON.stringify(process.env.VITE_RECAPTCHA_SITE_KEY ?? ""),
+    "process.env.VITE_RECAPTCHA_PROVIDER": JSON.stringify(process.env.VITE_RECAPTCHA_PROVIDER ?? "enterprise"),
     "process.env.FIREBASE_APPCHECK_DEBUG_TOKEN": JSON.stringify(debugToken),
   },
 });
 await copyFile(join(root, "..", "..", "node_modules", "@xyflow/react", "dist", "style.css"), join(root, "dist", "xyflow.css"));
-for (const name of ["index.html", "styles.css"]) {
+for (const name of ["index.html", "styles.css", "favicon.svg"]) {
   await copyFile(join(root, "public", name), join(root, "dist", name));
 }

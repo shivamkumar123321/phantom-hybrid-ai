@@ -3,8 +3,11 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>PHANTOM Demo Website</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <style>
     body { margin: 0 auto; max-width: 760px; padding: 24px; font: 16px/1.5 system-ui, sans-serif; }
+    .brand-title { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+    .brand-title h1 { margin: 0; }
     .card { border: 1px solid #b5bcc7; border-radius: 10px; padding: 18px; margin: 16px 0; }
     button { margin-right: 8px; padding: 8px 12px; cursor: pointer; }
     a { color: #1457b0; }
@@ -17,7 +20,11 @@
   </style>
 </head>
 <body>
-  <h1>PHANTOM Demo Website</h1>
+  <header class="brand-title">
+    <img src="/favicon.svg" alt="" width="34" height="34">
+    <h1>PHANTOM Demo Website</h1>
+  </header>
+  <main>
   <p>A controlled website with four deliberately broken client-side interactions. Enable PHANTOM monitoring for this site, then test each scenario.</p>
   <section class="card" id="nav-scenario">
     <h2>1. Broken navigation</h2>
@@ -143,5 +150,6 @@
     updateSummary();
     record('All four broken demo scenarios active.');
   </script>
+  </main>
 </body>
 </html>
