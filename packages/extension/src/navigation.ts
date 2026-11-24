@@ -1,10 +1,13 @@
 import type { Diagnosis } from "@phantom/shared";
 
-const hintNames = ["data-href", "data-route", "data-url"] as const;
+const hintNames = ["data-href", "data-route", "data-url", "data-to", "data-link"] as const;
+const brokenHrefPattern = /^(?:#|javascript:\s*(?:void\s*\(\s*0\s*\)|;?))$/i;
 
 export function hasBrokenDestination(link: HTMLAnchorElement): boolean {
   const raw = link.getAttribute("href");
-  return raw === null || raw.trim() === "" || raw.trim() === "#";
+  if (raw === null) return true;
+  const trimmed = raw.trim();
+  return trimmed === "" || brokenHrefPattern.test(trimmed);
 }
 
 export function knownDestination(link: HTMLAnchorElement): string | null {

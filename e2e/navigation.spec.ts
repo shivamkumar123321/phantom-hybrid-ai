@@ -77,8 +77,13 @@ test("four demo failures can be investigated, repaired, verified and undone", as
     await demo.evaluate(() => { (document.querySelector("#no-fallback-image") as HTMLImageElement).src = "/missing-no-fallback.png?again=" + Date.now(); });
     await expect(panel.locator("#failure-status")).toContainText("image may be broken");
     await panel.locator("#investigate").click();
-    await expect(panel.locator("#action")).toContainText("NO_SAFE_REPAIR");
-    await expect(panel.locator("#apply")).toBeHidden();
+    await expect(panel.locator("#action")).toContainText("REPLACE_BROKEN_IMAGE_PLACEHOLDER");
+    await expect(panel.locator("#apply")).toBeVisible();
+    await panel.locator("#apply").click();
+    await expect(panel.locator("#failure-status")).toContainText("image placeholder loaded");
+    await expect(demo.locator("#no-fallback-image")).toHaveAttribute("src", /^data:image\/svg\+xml/);
+    await panel.locator("#undo").click();
+    await expect(demo.locator("#no-fallback-image")).toHaveAttribute("src", /missing-no-fallback/);
 
     await demo.locator("#form-button").click();
     await expect(panel.locator("#failure-status")).toContainText("form button may be broken");

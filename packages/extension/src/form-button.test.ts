@@ -40,6 +40,22 @@ describe("form button repair", () => {
     expect(supportedFormButton(button('<form><button type="button">Show help</button></form>'))).toBeNull();
   });
 
+  it("detects misconfigured submit-intent buttons on external forms without data-phantom-submit", () => {
+    const target = button('<form><input name="note"><button type="button">Submit</button></form>');
+    expect(supportedFormButton(target)).toBe(target);
+    expect(diagnoseFormButton(target).action).toBe("RESTORE_BUTTON_SEMANTICS");
+    const undo = applyFormButtonRepair(target);
+    expect(target.type).toBe("submit");
+    undo?.();
+    expect(target.getAttribute("type")).toBe("button");
+  });
+
+  it("does not flag type=button if the form already has a real submit button", () => {
+    const target = button('<form><button type="submit">Go</button><button type="button" id="sec">Save draft</button></form>');
+    const secondary = document.querySelector("#sec");
+    expect(supportedFormButton(secondary)).toBeNull();
+  });
+
   it("requires this button's submit event before verification", () => {
     const target = button();
     const other = document.createElement("button");

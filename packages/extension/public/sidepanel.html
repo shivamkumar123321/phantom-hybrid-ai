@@ -31,6 +31,20 @@
         </div>
       </section>
 
+      <section id="page-issues" class="glass-card" aria-live="polite">
+        <div class="section-header">
+          <h2>Page Scan</h2>
+          <span id="page-issues-count" class="count-pill">0 found</span>
+        </div>
+        <p id="page-issues-empty" class="empty-text">Turn on monitoring to scan this page automatically.</p>
+        <div class="btn-row">
+          <button id="scan-page" class="btn btn-ghost" type="button" disabled>Scan page</button>
+          <button id="fix-all-safe" class="btn btn-primary" type="button" hidden>Fix all safe issues</button>
+          <button id="undo-all" class="btn btn-danger" type="button" hidden>Undo all</button>
+        </div>
+        <ul id="page-issues-list"></ul>
+      </section>
+
       <section id="cloud-confirm" class="glass-card glass-accent" hidden aria-live="polite">
         <h2>Allow Cloud AI check?</h2>
         <p class="card-copy">PHANTOM will only send cleaned-up page details below. Passwords, tokens, cookies, and emails are removed.</p>

@@ -64,6 +64,11 @@ export const repairCommand = z.discriminatedUnion("type", [
   z.object({ type: z.literal("SET_DIAGNOSIS"), diagnosis }),
   z.object({ type: z.literal("GET_SHAREABLE_RECIPE") }),
   z.object({ type: z.literal("APPLY_COMMUNITY_RECIPE"), recipe: repairRecipe }),
+  z.object({ type: z.literal("GET_PAGE_ISSUES") }),
+  z.object({ type: z.literal("SCAN_PAGE") }),
+  z.object({ type: z.literal("SELECT_ISSUE"), id: z.string().min(1) }),
+  z.object({ type: z.literal("APPLY_ALL_SAFE") }),
+  z.object({ type: z.literal("UNDO_ALL_REPAIRS") }),
 ]);
 
 export type RepairCommand = z.infer<typeof repairCommand>;

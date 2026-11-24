@@ -24,7 +24,7 @@ export function buildShareableRecipe(input: {
   diagnosis: Diagnosis;
 }): RepairRecipe | null {
   if (!input.target.isConnected || isSensitiveTarget(input.target)) return null;
-  if (input.diagnosis.action === "NO_SAFE_REPAIR") return null;
+  if (input.diagnosis.action === "NO_SAFE_REPAIR" || input.diagnosis.action === "REPLACE_BROKEN_IMAGE_PLACEHOLDER") return null;
   return createRepairRecipe({
     origin: input.origin,
     bugType: input.bugType,

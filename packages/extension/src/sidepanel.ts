@@ -13,6 +13,7 @@ import {
   type DiagnosisOutcome,
   type EvidencePacket,
   type FailureView,
+  type PageIssueSummary,
   type PickerState,
   type RepairHistoryEntry,
   type RepairRecipe,
@@ -26,6 +27,12 @@ const aiStatus = document.querySelector<HTMLElement>("#ai-status")!;
 const pick = document.querySelector<HTMLButtonElement>("#pick")!;
 const cancelPick = document.querySelector<HTMLButtonElement>("#cancel-pick")!;
 const pickerStatus = document.querySelector<HTMLElement>("#picker-status")!;
+const pageIssuesCount = document.querySelector<HTMLElement>("#page-issues-count")!;
+const pageIssuesEmpty = document.querySelector<HTMLElement>("#page-issues-empty")!;
+const pageIssuesList = document.querySelector<HTMLUListElement>("#page-issues-list")!;
+const scanPageButton = document.querySelector<HTMLButtonElement>("#scan-page")!;
+const fixAllSafeButton = document.querySelector<HTMLButtonElement>("#fix-all-safe")!;
+const undoAllButton = document.querySelector<HTMLButtonElement>("#undo-all")!;
 const cloudConfirm = document.querySelector<HTMLElement>("#cloud-confirm")!;
 const cloudSummary = document.querySelector<HTMLElement>("#cloud-summary")!;
 const cloudRemember = document.querySelector<HTMLInputElement>("#cloud-remember")!;
@@ -73,8 +80,11 @@ function renderFailure(view: FailureView): void {
     shareStatus.textContent = "";
   }
   const names = { navigation: "link", "css-button": "button", image: "image", "form-button": "form button", manual: "element" };
-  const pending: Partial<Record<typeof view.kind, string>> = { navigation: "Click the link to verify navigation.", "css-button": "Click the button to verify its action.", image: "Waiting for the backup image to load.", "form-button": "Click the form button to verify submission." };
-  const verified: Partial<Record<typeof view.kind, string>> = { navigation: "navigation worked.", "css-button": "the button action worked.", image: "the backup image loaded.", "form-button": "the form handled submission." };
+  const pending: Partial<Record<typeof view.kind, string>> = { navigation: "Click the link to verify navigation.", "css-button": "Click the button to verify its action.", image: "Waiting for the replacement image to load.", "form-button": "Click the form button to verify submission." };
+  const imageVerified = view.diagnosis?.action === "REPLACE_BROKEN_IMAGE_PLACEHOLDER"
+    ? "the image placeholder loaded."
+    : "the backup image loaded.";
+  const verified: Partial<Record<typeof view.kind, string>> = { navigation: "navigation worked.", "css-button": "the button action worked.", image: imageVerified, "form-button": "the form handled submission." };
   const previewText = view.diagnosis?.action === "NO_SAFE_REPAIR"
     ? "Diagnosis complete. No safe repair is available."
     : "Review the proposed repair before applying it.";
@@ -90,7 +100,7 @@ function renderFailure(view: FailureView): void {
   diagnosisSection.hidden = !view.diagnosis;
   apply.hidden = view.state !== "preview" || !view.diagnosis || view.diagnosis.action === "NO_SAFE_REPAIR";
   undo.hidden = view.state !== "pending" && view.state !== "verified";
-  shareRecipe.hidden = view.fromCommunity === true || view.state !== "verified" || !view.diagnosis || view.diagnosis.action === "NO_SAFE_REPAIR";
+  shareRecipe.hidden = view.fromCommunity === true || view.state !== "verified" || !view.diagnosis || view.diagnosis.action === "NO_SAFE_REPAIR" || view.diagnosis.action === "REPLACE_BROKEN_IMAGE_PLACEHOLDER";
   if (view.diagnosis) {
     document.querySelector<HTMLElement>("#reason")!.textContent = `What went wrong: ${view.diagnosis.reason}`;
     document.querySelector<HTMLElement>("#confidence")!.textContent = `Confidence: ${Math.round(view.diagnosis.confidence * 100)}%`;
@@ -108,6 +118,82 @@ function renderPicker(state: PickerState | null): void {
   pick.disabled = !monitor.checked || !currentOrigin;
   cancelPick.hidden = !active;
   pickerStatus.textContent = state?.notice ?? "";
+}
+
+function renderPageIssues(issues: PageIssueSummary[]): void {
+  pageIssuesList.replaceChildren();
+  scanPageButton.disabled = !monitor.checked || !currentOrigin;
+  pageIssuesCount.textContent = `${issues.length} found`;
+  const hasFixable = issues.some((issue) => issue.canAutoRepair && (issue.state === "suspected" || issue.state === "preview" || issue.state === "undone"));
+  const hasUndoable = issues.some((issue) => issue.state === "pending" || issue.state === "verified");
+  fixAllSafeButton.hidden = !monitor.checked || !hasFixable;
+  undoAllButton.hidden = !hasUndoable;
+
+  if (!monitor.checked || !currentOrigin) {
+    pageIssuesEmpty.textContent = "Turn on monitoring to scan this page automatically.";
+    pageIssuesEmpty.hidden = false;
+    return;
+  }
+  if (issues.length === 0) {
+    pageIssuesEmpty.textContent = "No broken controls or images spotted on this page yet.";
+    pageIssuesEmpty.hidden = false;
+    return;
+  }
+  pageIssuesEmpty.hidden = true;
+
+  for (const issue of issues) {
+    const item = document.createElement("li");
+    item.className = "issue-item";
+    const head = document.createElement("div");
+    head.className = "issue-head";
+    const label = document.createElement("span");
+    label.className = "issue-label";
+    label.textContent = issue.label;
+    const badge = document.createElement("span");
+    badge.className = "issue-badge";
+    badge.dataset.state = issue.state;
+    badge.textContent = issue.state;
+    head.append(label, badge);
+
+    const reason = document.createElement("p");
+    reason.className = "issue-reason";
+    reason.textContent = issue.reason;
+
+    const inspectButton = document.createElement("button");
+    inspectButton.type = "button";
+    inspectButton.className = "btn-ghost issue-inspect";
+    inspectButton.textContent = "Inspect";
+    inspectButton.addEventListener("click", () => {
+      void (async () => {
+        if (currentTabId === null) return;
+        try {
+          const res = await chrome.tabs.sendMessage(currentTabId, { type: "SELECT_ISSUE", id: issue.id }) as { failure?: FailureView; issues?: PageIssueSummary[]; error?: string };
+          if (res?.error) throw new Error(res.error);
+          if (res?.failure !== undefined) renderFailure(res.failure);
+          if (res?.issues) renderPageIssues(res.issues);
+        } catch {
+          failureStatus.textContent = "Could not inspect that element.";
+        }
+      })();
+    });
+
+    item.append(head, reason, inspectButton);
+    pageIssuesList.append(item);
+  }
+}
+
+async function refreshPageIssues(): Promise<void> {
+  const tabId = currentTabId;
+  if (tabId === null || !monitor.checked || !currentOrigin) {
+    renderPageIssues([]);
+    return;
+  }
+  try {
+    const res = await chrome.tabs.sendMessage(tabId, { type: "GET_PAGE_ISSUES" }) as { issues?: PageIssueSummary[] };
+    if (currentTabId === tabId) renderPageIssues(res?.issues ?? []);
+  } catch {
+    if (currentTabId === tabId) renderPageIssues([]);
+  }
 }
 
 function renderCommunity(recipes: RepairRecipe[]): void {
@@ -222,6 +308,7 @@ async function sendTabCommand<T>(type: "APPLY_REPAIR" | "UNDO_REPAIR" | "START_P
 
 const refreshFailure = async () => {
   await queryTabState<FailureView>("GET_FAILURE", renderFailure);
+  await refreshPageIssues();
   await refreshHistory();
   await refreshCommunity();
 };
@@ -325,6 +412,46 @@ apply.addEventListener("click", () => { void sendTabCommand("APPLY_REPAIR", rend
 undo.addEventListener("click", () => { void sendTabCommand("UNDO_REPAIR", renderFailure, () => { failureStatus.textContent = "Could not complete that action. Try again."; }); });
 pick.addEventListener("click", () => { void sendTabCommand("START_PICKING", renderPicker, () => { pickerStatus.textContent = "Could not update element picking. Reload the page and try again."; }); });
 cancelPick.addEventListener("click", () => { void sendTabCommand("CANCEL_PICKING", renderPicker, () => { pickerStatus.textContent = "Could not update element picking. Reload the page and try again."; }); });
+scanPageButton.addEventListener("click", () => {
+  void (async () => {
+    if (currentTabId === null) return;
+    scanPageButton.disabled = true;
+    try {
+      const res = await chrome.tabs.sendMessage(currentTabId, { type: "SCAN_PAGE" }) as { issues?: PageIssueSummary[] };
+      renderPageIssues(res?.issues ?? []);
+    } finally {
+      scanPageButton.disabled = !monitor.checked || !currentOrigin;
+    }
+  })();
+});
+fixAllSafeButton.addEventListener("click", () => {
+  void (async () => {
+    if (currentTabId === null) return;
+    fixAllSafeButton.disabled = true;
+    try {
+      const res = await chrome.tabs.sendMessage(currentTabId, { type: "APPLY_ALL_SAFE" }) as { failure?: FailureView; issues?: PageIssueSummary[]; error?: string };
+      if (res?.failure !== undefined) renderFailure(res.failure);
+      if (res?.issues) renderPageIssues(res.issues);
+      void refreshHistory();
+    } finally {
+      fixAllSafeButton.disabled = false;
+    }
+  })();
+});
+undoAllButton.addEventListener("click", () => {
+  void (async () => {
+    if (currentTabId === null) return;
+    undoAllButton.disabled = true;
+    try {
+      const res = await chrome.tabs.sendMessage(currentTabId, { type: "UNDO_ALL_REPAIRS" }) as { failure?: FailureView; issues?: PageIssueSummary[] };
+      if (res?.failure !== undefined) renderFailure(res.failure);
+      if (res?.issues) renderPageIssues(res.issues);
+      void refreshHistory();
+    } finally {
+      undoAllButton.disabled = false;
+    }
+  })();
+});
 
 async function showStatus(origin: string, enabled: boolean): Promise<void> {
   if (!enabled) { status.textContent = "Monitoring is off for this site."; return; }
@@ -356,6 +483,7 @@ async function refresh(): Promise<void> {
     monitor.checked = false;
     renderPicker(null);
     renderFailure(null);
+    renderPageIssues([]);
     renderCommunity([]);
     await refreshHistory();
     return;

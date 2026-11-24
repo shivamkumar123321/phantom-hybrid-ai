@@ -8,6 +8,7 @@ export const repairAction = z.enum([
   "RESTORE_POINTER_EVENTS",
   "RESTORE_BUTTON_SEMANTICS",
   "USE_KNOWN_IMAGE_FALLBACK",
+  "REPLACE_BROKEN_IMAGE_PLACEHOLDER",
   "RESTORE_SUPPORTED_FORM_BEHAVIOR",
   "NO_SAFE_REPAIR",
 ]);
@@ -24,6 +25,16 @@ export type Diagnosis = z.infer<typeof diagnosis>;
 export type RepairState = "suspected" | "preview" | "pending" | "verified" | "undone";
 export type FailureView = { kind: FailureKind; state: RepairState; diagnosis: Diagnosis | null; repairId?: string | null; fromCommunity?: boolean } | null;
 export type PickerState = { active: boolean; notice: string | null };
+export type PageIssueSummary = {
+  id: string;
+  kind: FailureKind;
+  tagName: string;
+  label: string;
+  reason: string;
+  action: z.infer<typeof repairAction>;
+  state: RepairState;
+  canAutoRepair: boolean;
+};
 
 export function siteOrigin(url: string): string | null {
   try {

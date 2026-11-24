@@ -1,14 +1,22 @@
 import type { Diagnosis } from "@phantom/shared";
 import { isSensitiveTarget } from "./sensitive";
 
-/** A form button is a repair candidate only after a click produced no useful outcome. */
+const SUBMIT_INTENT_PATTERN = /\b(submit|save|send|search|apply|confirm|continue|next|post|create|update|subscribe|register|go|finish|done|publish|book|order|add)\b/i;
+const NON_SUBMIT_PATTERN = /\b(help|cancel|close|reset|back|dismiss|skip|toggle|menu|clear|copy|show|hide|expand|collapse)\b/i;
+
+/** A form button is a repair candidate when configured as type="button" on a safe non-sensitive form. */
 export function supportedFormButton(target: EventTarget | null): HTMLButtonElement | null {
   if (!(target instanceof Element)) return null;
   const button = target.closest("button");
-  if (!(button instanceof HTMLButtonElement) || button.getAttribute("type")?.toLowerCase() !== "button" || !button.hasAttribute("data-phantom-submit")) return null;
+  if (!(button instanceof HTMLButtonElement) || button.getAttribute("type")?.toLowerCase() !== "button") return null;
   const form = button.form;
   if (!form || isSensitiveTarget(button) || isSensitiveTarget(form)) return null;
-  return button;
+  if (button.hasAttribute("data-phantom-submit")) return button;
+  const hasRealSubmitter = Boolean(form.querySelector('button[type="submit"], button:not([type]), input[type="submit"]'));
+  if (hasRealSubmitter) return null;
+  const label = `${button.getAttribute("aria-label") ?? ""} ${button.textContent ?? ""}`.trim();
+  if (!label || NON_SUBMIT_PATTERN.test(label)) return null;
+  return SUBMIT_INTENT_PATTERN.test(label) ? button : null;
 }
 
 export function diagnoseFormButton(button: HTMLButtonElement): Diagnosis {

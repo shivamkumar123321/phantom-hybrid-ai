@@ -10,31 +10,49 @@ import {
   type FailureKind,
   type FailureView,
   type InferenceSourceName,
+  type PageIssueSummary,
   type PickerState,
   type PipelineRoute,
   type PipelineStage,
   type RepairState,
 } from "@phantom/shared";
+import { applyImageFallback, applyImagePlaceholder, diagnoseBrokenImage, isFailedImage, isImageFallbackLoaded, knownImageFallback, restoreImageSource, type OriginalImageSource } from "./broken-image";
 import { applyPointerEventsRepair, diagnoseBlockedButton, findBlockedButtonAtPoint, undoPointerEventsRepair, type PointerEventsSnapshot } from "./css-button";
-import { applyImageFallback, diagnoseBrokenImage, isFailedImage, isImageFallbackLoaded, knownImageFallback, restoreImageSource, type OriginalImageSource } from "./broken-image";
 import { applyFormButtonRepair, diagnoseFormButton, supportedFormButton, verifiesFormButton } from "./form-button";
 import { buildShareableRecipe, resolveCommunityTarget } from "./community";
 import { inspectPickedElement, resolvePickableTarget } from "./manual-picker";
 import { diagnoseNavigation, hasBrokenDestination, knownDestination } from "./navigation";
+import { describeIssueTarget, scanPageForIssues } from "./scanner";
 import { isSensitiveTarget } from "./sensitive";
 
 type Failure = {
-  runId: string; repairId?: string; fromCommunity?: boolean;
-  kind: FailureKind; target: HTMLElement; diagnosis: Diagnosis; state: RepairState;
-  originalOutline: string; originalOutlineOffset: string;
-  originalHref?: string | null; originalUrl?: string;
-  pointerSnapshot?: PointerEventsSnapshot; imageOriginal?: OriginalImageSource;
-  formUndo?: () => void; fallback?: string;
+  id: string;
+  runId: string;
+  repairId?: string;
+  fromCommunity?: boolean;
+  kind: FailureKind;
+  target: HTMLElement;
+  label: string;
+  diagnosis: Diagnosis;
+  state: RepairState;
+  originalOutline: string;
+  originalOutlineOffset: string;
+  originalHref?: string | null;
+  originalUrl?: string;
+  pointerSnapshot?: PointerEventsSnapshot;
+  imageOriginal?: OriginalImageSource;
+  formUndo?: () => void;
+  fallback?: string;
 };
 
 const origin = siteOrigin(location.href);
 let enabled = false;
 let failure: Failure | null = null;
+const pageIssues = new Map<string, Failure>();
+const elementIssueIds = new WeakMap<HTMLElement, string>();
+const recentlyUndone = new WeakSet<HTMLElement>();
+let scanTimer: ReturnType<typeof setTimeout> | null = null;
+let domObserver: MutationObserver | null = null;
 let awaitingInteraction = false;
 let pendingClick: { target: HTMLElement; kind: FailureKind; diagnosis: Diagnosis } | null = null;
 let picking = false;
@@ -55,6 +73,27 @@ function visibleState(): FailureView {
     repairId: failure.repairId ?? null,
     fromCommunity: failure.fromCommunity,
   };
+}
+
+function summarizePageIssues(): PageIssueSummary[] {
+  const summaries: PageIssueSummary[] = [];
+  for (const [id, issue] of pageIssues.entries()) {
+    if (!issue.target.isConnected) {
+      pageIssues.delete(id);
+      continue;
+    }
+    summaries.push({
+      id,
+      kind: issue.kind,
+      tagName: issue.target.tagName.toLowerCase(),
+      label: issue.label,
+      reason: issue.diagnosis.reason,
+      action: issue.diagnosis.action,
+      state: issue.state,
+      canAutoRepair: issue.diagnosis.action !== "NO_SAFE_REPAIR",
+    });
+  }
+  return summaries;
 }
 
 function emitPipeline(
@@ -80,6 +119,11 @@ function outline(target: HTMLElement, color: string): void {
 }
 
 function savedOutline(target: HTMLElement): { originalOutline: string; originalOutlineOffset: string } {
+  const existingId = elementIssueIds.get(target);
+  const existing = existingId ? pageIssues.get(existingId) : undefined;
+  if (existing) {
+    return { originalOutline: existing.originalOutline, originalOutlineOffset: existing.originalOutlineOffset };
+  }
   return failure?.target === target
     ? { originalOutline: failure.originalOutline, originalOutlineOffset: failure.originalOutlineOffset }
     : { originalOutline: target.style.outline, originalOutlineOffset: target.style.outlineOffset };
@@ -124,20 +168,96 @@ function stopPicking(notice: string | null): void {
   announce();
 }
 
+function upsertPageIssue(input: {
+  kind: FailureKind;
+  target: HTMLElement;
+  diagnosis: Diagnosis;
+  label?: string;
+  state?: RepairState;
+  fromCommunity?: boolean;
+}): Failure {
+  const existingId = elementIssueIds.get(input.target);
+  const existing = existingId ? pageIssues.get(existingId) : undefined;
+  if (existing && existing.target.isConnected) {
+    if (existing.state === "undone" && input.state) {
+      existing.kind = input.kind;
+      existing.diagnosis = input.diagnosis;
+      existing.state = input.state;
+      existing.fromCommunity = input.fromCommunity;
+      existing.runId = crypto.randomUUID();
+    }
+    return existing;
+  }
+  const id = crypto.randomUUID();
+  const created: Failure = {
+    id,
+    runId: crypto.randomUUID(),
+    fromCommunity: input.fromCommunity,
+    kind: input.kind,
+    target: input.target,
+    label: input.label ?? describeIssueTarget(input.target, input.kind),
+    diagnosis: input.diagnosis,
+    state: input.state ?? "suspected",
+    ...savedOutline(input.target),
+  };
+  pageIssues.set(id, created);
+  elementIssueIds.set(input.target, id);
+  return created;
+}
+
+function focusIssue(targetIssue: Failure): void {
+  if (failure && failure !== targetIssue && failure.state === "suspected") {
+    restoreOutline(failure);
+  }
+  failure = targetIssue;
+  outline(
+    targetIssue.target,
+    targetIssue.state === "verified" ? "#16a34a" : targetIssue.state === "preview" ? "#7c3aed" : "#eab308",
+  );
+}
+
 function suspect(kind: FailureKind, target: HTMLElement, diagnosis: Diagnosis): void {
   if (!enabled || !target.isConnected || isSensitiveTarget(target)) return;
   if (failure?.state === "pending" || failure?.state === "verified") return;
   if (failure?.target === target && failure.state !== "undone") return;
-  if (failure) restoreOutline(failure);
-  failure = { runId: crypto.randomUUID(), kind, target, diagnosis, state: "suspected", originalOutline: target.style.outline, originalOutlineOffset: target.style.outlineOffset };
-  outline(target, "#eab308");
-  emitPipeline(failure, "detection", "done", `Suspected ${kind} failure detected`);
+  if (failure && failure.state !== "undone") restoreOutline(failure);
+  const issue = upsertPageIssue({ kind, target, diagnosis, state: "suspected" });
+  issue.kind = kind;
+  issue.diagnosis = diagnosis;
+  issue.state = "suspected";
+  focusIssue(issue);
+  emitPipeline(issue, "detection", "done", `Suspected ${kind} failure detected`);
   announce();
 }
 
 function restoreOutline(current: Failure): void {
   current.target.style.outline = current.originalOutline;
   current.target.style.outlineOffset = current.originalOutlineOffset;
+}
+
+function refreshPageScan(options: { autoSelectImages?: boolean; notify?: boolean } = {}): PageIssueSummary[] {
+  if (!enabled) return [];
+  const discovered = scanPageForIssues(document);
+  let firstNewImage: Failure | null = null;
+  let changed = false;
+
+  for (const item of discovered) {
+    const existed = elementIssueIds.has(item.target);
+    const issue = upsertPageIssue(item);
+    if (!existed) {
+      changed = true;
+      if (item.kind === "image" && !firstNewImage) firstNewImage = issue;
+    }
+  }
+
+  if (options.autoSelectImages && firstNewImage && (!failure || !failure.target.isConnected || failure.state === "undone")) {
+    focusIssue(firstNewImage);
+    emitPipeline(firstNewImage, "detection", "done", "Suspected image failure detected");
+    changed = true;
+  }
+
+  if (changed || options.notify) announce();
+  return summarizePageIssues();
 }
 
 function afterQuietClick(target: HTMLElement, kind: FailureKind, diagnosis: Diagnosis): void {
@@ -161,12 +281,27 @@ function afterQuietClick(target: HTMLElement, kind: FailureKind, diagnosis: Diag
 function watchRepairedClick(target: HTMLElement): void {
   awaitingInteraction = true;
   window.setTimeout(() => { awaitingInteraction = false; }, 1500);
-  if (failure?.kind !== "css-button") return;
+  const current = failure;
+  if (!current || current.kind !== "css-button") return;
   const outcome = expectedOutcome(target);
-  const before = outcome?.textContent;
+  if (outcome) {
+    const before = outcome.textContent;
+    window.setTimeout(() => {
+      if (outcome.textContent !== before && current.target === target && current.state === "pending") verifyIssue(current);
+    }, 700);
+    return;
+  }
+  const beforeHref = location.href;
+  let mutated = false;
+  const observer = new MutationObserver(() => { mutated = true; });
+  observer.observe(target.parentElement ?? document.body ?? target, { childList: true, characterData: true, subtree: true });
   window.setTimeout(() => {
-    if (outcome && outcome.textContent !== before && failure?.target === target && failure.state === "pending") verify();
-  }, 700);
+    observer.disconnect();
+    if (current.target === target && current.state === "pending") {
+      const unblocked = getComputedStyle(target).pointerEvents !== "none";
+      if (mutated || location.href !== beforeHref || unblocked) verifyIssue(current);
+    }
+  }, 200);
 }
 
 function expectedOutcome(target: HTMLElement): Element | null {
@@ -190,27 +325,29 @@ function observeClick(event: MouseEvent): void {
       return;
     }
     stopPicking(null);
-    const preserved = savedOutline(inspected.target);
     if (failure && failure.target !== inspected.target) restoreOutline(failure);
-    failure = {
-      runId: crypto.randomUUID(),
+    const issue = upsertPageIssue({
       kind: inspected.kind,
       target: inspected.target,
       diagnosis: inspected.diagnosis,
       state: "preview",
-      ...preserved,
-    };
-    outline(inspected.target, "#7c3aed");
-    emitPipeline(failure, "detection", "done", `Manually picked ${inspected.kind} element`);
-    emitPipeline(failure, "evidence", "done", "Sanitized page metadata ready");
-    emitPipeline(failure, "routing", "done", "Rules-only local pick", inspected.diagnosis.source, "RULES_ONLY");
-    emitPipeline(failure, "diagnosis", "done", inspected.diagnosis.action, inspected.diagnosis.source, "RULES_ONLY");
+    });
+    issue.kind = inspected.kind;
+    issue.diagnosis = inspected.diagnosis;
+    issue.state = "preview";
+    focusIssue(issue);
+    emitPipeline(issue, "detection", "done", `Manually picked ${inspected.kind} element`);
+    emitPipeline(issue, "evidence", "done", "Sanitized page metadata ready");
+    emitPipeline(issue, "routing", "done", "Rules-only local pick", inspected.diagnosis.source, "RULES_ONLY");
+    emitPipeline(issue, "diagnosis", "done", inspected.diagnosis.action, inspected.diagnosis.source, "RULES_ONLY");
     announce();
     return;
   }
   if (!enabled || isSensitiveTarget(event.target)) return;
   void chrome.runtime.sendMessage({ type: "OBSERVED_INTERACTION", origin }).catch(() => {});
-  const direct = event.target instanceof Element ? event.target.closest("a, button") : null;
+  const direct = event.target instanceof Element
+    ? event.target.closest('a, button, input[type="button"], input[type="submit"], [role="button"]')
+    : null;
   if (failure?.state === "pending" && direct === failure.target) { watchRepairedClick(failure.target); return; }
   const blocked = findBlockedButtonAtPoint(event.target, event.clientX, event.clientY);
   if (blocked && !isSensitiveTarget(blocked)) { afterQuietClick(blocked, "css-button", diagnoseBlockedButton()); return; }
@@ -222,17 +359,22 @@ function observeClick(event: MouseEvent): void {
   }
 }
 
+function verifyIssue(targetIssue: Failure): void {
+  if (targetIssue.state !== "pending") return;
+  targetIssue.state = "verified";
+  if (failure === targetIssue) awaitingInteraction = false;
+  outline(targetIssue.target, "#16a34a");
+  if (targetIssue.repairId) {
+    void chrome.runtime.sendMessage({ type: "UPDATE_REPAIR_HISTORY", id: targetIssue.repairId, verificationResult: "verified" }).catch(() => {});
+  }
+  emitPipeline(targetIssue, "verification", "done", "Verification Result: behavior restored", targetIssue.diagnosis.source);
+  emitPipeline(targetIssue, "history", "done", "History updated: verified", targetIssue.diagnosis.source);
+  announce();
+}
+
 function verify(): void {
   if (!failure || failure.state !== "pending" || !awaitingInteraction) return;
-  failure.state = "verified";
-  awaitingInteraction = false;
-  outline(failure.target, "#16a34a");
-  if (failure.repairId) {
-    void chrome.runtime.sendMessage({ type: "UPDATE_REPAIR_HISTORY", id: failure.repairId, verificationResult: "verified" }).catch(() => {});
-  }
-  emitPipeline(failure, "verification", "done", "Verification Result: behavior restored", failure.diagnosis.source);
-  emitPipeline(failure, "history", "done", "History updated: verified", failure.diagnosis.source);
-  announce();
+  verifyIssue(failure);
 }
 
 function verifyNavigation(): void {
@@ -244,22 +386,22 @@ function verifyNavigation(): void {
 function observeImage(event: Event): void {
   const image = event.target;
   if (!(image instanceof HTMLImageElement) || !enabled || isSensitiveTarget(image)) return;
-  if (event.type === "error" && isFailedImage(image)) suspect("image", image, diagnoseBrokenImage(image));
-  if (event.type === "load" && failure?.target === image && failure.state === "pending" && failure.fallback && isImageFallbackLoaded(image, failure.fallback)) {
-    awaitingInteraction = true;
-    verify();
+  if (event.type === "error" && isFailedImage(image)) {
+    if (recentlyUndone.has(image)) return;
+    suspect("image", image, diagnoseBrokenImage(image));
+    return;
   }
-}
-
-function scanFailedImages(): void {
-  if (!enabled) return;
-  for (const image of [...document.images].slice(0, 100)) {
-    if (isFailedImage(image) && !isSensitiveTarget(image)) { suspect("image", image, diagnoseBrokenImage(image)); break; }
+  if (event.type === "load") {
+    const issueId = elementIssueIds.get(image);
+    const issue = (issueId ? pageIssues.get(issueId) : undefined) ?? (failure?.target === image ? failure : undefined);
+    if (issue && issue.state === "pending" && issue.fallback && isImageFallbackLoaded(image, issue.fallback)) {
+      verifyIssue(issue);
+    }
   }
 }
 
 function collectEvidence(current: Failure): EvidencePacket {
-  const attributeNames = ["href", "data-href", "data-route", "data-url", "src", "data-fallback-src", "data-src", "srcset", "type", "role", "aria-label", "data-phantom-submit"] as const;
+  const attributeNames = ["href", "data-href", "data-route", "data-url", "data-to", "data-link", "src", "data-fallback-src", "data-src", "data-lazy-src", "data-original", "data-srcset", "srcset", "type", "role", "aria-label", "data-phantom-submit"] as const;
   const attributes: Record<string, string> = {};
   for (const name of attributeNames) {
     const value = current.target.getAttribute(name);
@@ -298,12 +440,18 @@ function applyRepair(current: Failure): string | null {
     current.originalUrl = location.href;
     link.setAttribute("href", destination);
   } else if (current.kind === "css-button") {
-    current.pointerSnapshot = applyPointerEventsRepair(current.target as HTMLButtonElement);
+    current.pointerSnapshot = applyPointerEventsRepair(current.target);
   } else if (current.kind === "image") {
     const image = current.target as HTMLImageElement;
-    current.fallback = knownImageFallback(image) ?? undefined;
-    current.imageOriginal = applyImageFallback(image) ?? undefined;
-    if (!current.imageOriginal) return "No trusted backup image";
+    if (current.diagnosis.action === "REPLACE_BROKEN_IMAGE_PLACEHOLDER") {
+      const applied = applyImagePlaceholder(image);
+      current.fallback = applied.placeholder;
+      current.imageOriginal = applied.original;
+    } else {
+      current.fallback = knownImageFallback(image) ?? undefined;
+      current.imageOriginal = applyImageFallback(image) ?? undefined;
+      if (!current.imageOriginal) return "No trusted backup image";
+    }
   } else if (current.kind === "form-button") {
     current.formUndo = applyFormButtonRepair(current.target as HTMLButtonElement) ?? undefined;
     if (!current.formUndo) return "Form is not safe to repair";
@@ -328,6 +476,14 @@ function applyRepair(current: Failure): string | null {
   emitPipeline(current, "repair", "done", `Applied ${current.diagnosis.action}`, current.diagnosis.source);
   emitPipeline(current, "verification", "waiting", "Waiting for Verification Result", current.diagnosis.source);
   emitPipeline(current, "history", "done", "Saved repair to local history", current.diagnosis.source);
+
+  if (current.kind === "image" && current.diagnosis.action === "REPLACE_BROKEN_IMAGE_PLACEHOLDER" && current.fallback) {
+    const placeholder = current.fallback;
+    const image = current.target as HTMLImageElement;
+    window.setTimeout(() => {
+      if (current.state === "pending" && isImageFallbackLoaded(image, placeholder)) verifyIssue(current);
+    }, 50);
+  }
   return null;
 }
 
@@ -340,13 +496,15 @@ function undoRepair(current: Failure): string | null {
     else if (current.originalHref !== undefined) link.setAttribute("href", current.originalHref);
     if (destination && location.href === new URL(destination, current.originalUrl).href) history.replaceState(history.state, "", current.originalUrl);
   } else if (current.kind === "css-button" && current.pointerSnapshot) {
-    undoPointerEventsRepair(current.target as HTMLButtonElement, current.pointerSnapshot);
+    undoPointerEventsRepair(current.target, current.pointerSnapshot);
   } else if (current.kind === "image" && current.imageOriginal) {
     restoreImageSource(current.target as HTMLImageElement, current.imageOriginal);
   } else if (current.kind === "form-button") current.formUndo?.();
   restoreOutline(current);
   current.state = "undone";
-  awaitingInteraction = false;
+  recentlyUndone.add(current.target);
+  window.setTimeout(() => { recentlyUndone.delete(current.target); }, 800);
+  if (failure === current) awaitingInteraction = false;
   if (current.repairId) {
     void chrome.runtime.sendMessage({ type: "UPDATE_REPAIR_HISTORY", id: current.repairId, verificationResult: "undone" }).catch(() => {});
   }
@@ -355,16 +513,43 @@ function undoRepair(current: Failure): string | null {
   return null;
 }
 
+function startDomWatcher(): void {
+  if (domObserver || !document.body) return;
+  domObserver = new MutationObserver(() => {
+    if (!enabled) return;
+    if (scanTimer) clearTimeout(scanTimer);
+    scanTimer = setTimeout(() => {
+      scanTimer = null;
+      refreshPageScan({ autoSelectImages: false });
+    }, 400);
+  });
+  domObserver.observe(document.body, { childList: true, subtree: true });
+}
+
+function stopDomWatcher(): void {
+  if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
+  domObserver?.disconnect();
+  domObserver = null;
+}
+
 if (origin) {
   chrome.runtime.sendMessage({ type: "GET_MONITORING", origin }).then((state: { enabled?: boolean }) => {
     enabled = state.enabled === true;
-    scanFailedImages();
+    if (enabled) {
+      refreshPageScan({ autoSelectImages: true });
+      startDomWatcher();
+    }
   }).catch(() => { enabled = false; });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "local" && changes[monitoringKey(origin)]) {
       enabled = changes[monitoringKey(origin)].newValue === true;
-      if (!enabled && picking) stopPicking(null);
-      scanFailedImages();
+      if (!enabled) {
+        if (picking) stopPicking(null);
+        stopDomWatcher();
+      } else {
+        refreshPageScan({ autoSelectImages: true });
+        startDomWatcher();
+      }
     }
   });
   document.addEventListener("pointermove", (event) => {
@@ -390,9 +575,14 @@ if (origin) {
   });
   document.addEventListener("submit", (event) => {
     if (failure?.kind !== "form-button" || !awaitingInteraction || !verifiesFormButton(event as SubmitEvent, failure.target as HTMLButtonElement)) return;
-    const outcome = expectedOutcome(failure.target);
-    const before = outcome?.textContent;
-    window.setTimeout(() => { if (outcome && outcome.textContent !== before) verify(); }, 0);
+    const current = failure;
+    const outcome = expectedOutcome(current.target);
+    if (outcome) {
+      const before = outcome.textContent;
+      window.setTimeout(() => { if (outcome.textContent !== before) verifyIssue(current); }, 0);
+    } else {
+      window.setTimeout(() => { if (current.state === "pending") verifyIssue(current); }, 0);
+    }
   }, true);
   window.addEventListener("hashchange", verifyNavigation);
   chrome.runtime.onMessage.addListener((untrusted: unknown, _sender, sendResponse) => {
@@ -400,6 +590,60 @@ if (origin) {
     if (!parsed.success) return false;
     if (parsed.data.type === "GET_FAILURE") { sendResponse(visibleState()); return false; }
     if (parsed.data.type === "GET_PICKER_STATE") { sendResponse(pickerState()); return false; }
+    if (parsed.data.type === "GET_PAGE_ISSUES") {
+      sendResponse({ issues: enabled ? refreshPageScan({ autoSelectImages: false }) : [] });
+      return false;
+    }
+    if (parsed.data.type === "SCAN_PAGE") {
+      if (!enabled) { sendResponse({ error: "Monitoring is off", issues: [] }); return false; }
+      sendResponse({ issues: refreshPageScan({ autoSelectImages: false, notify: true }) });
+      return false;
+    }
+    if (parsed.data.type === "SELECT_ISSUE") {
+      if (!enabled) { sendResponse({ error: "Monitoring is off" }); return false; }
+      const targetIssue = pageIssues.get(parsed.data.id);
+      if (!targetIssue || !targetIssue.target.isConnected) {
+        sendResponse({ error: "Issue no longer exists on this page." });
+        return false;
+      }
+      if (targetIssue.state === "suspected") targetIssue.state = "preview";
+      focusIssue(targetIssue);
+      sendResponse({ failure: visibleState(), issues: summarizePageIssues() });
+      announce();
+      return false;
+    }
+    if (parsed.data.type === "APPLY_ALL_SAFE") {
+      if (!enabled) { sendResponse({ error: "Monitoring is off" }); return false; }
+      refreshPageScan({ autoSelectImages: false });
+      let repairedCount = 0;
+      for (const issue of pageIssues.values()) {
+        if (!issue.target.isConnected) continue;
+        if ((issue.state === "suspected" || issue.state === "preview" || issue.state === "undone") && issue.diagnosis.action !== "NO_SAFE_REPAIR") {
+          issue.state = "preview";
+          const err = applyRepair(issue);
+          if (!err) repairedCount++;
+        }
+      }
+      sendResponse({ failure: visibleState(), issues: summarizePageIssues(), repairedCount });
+      announce();
+      return false;
+    }
+    if (parsed.data.type === "UNDO_ALL_REPAIRS") {
+      let undoneCount = 0;
+      for (const issue of pageIssues.values()) {
+        if (issue.state === "pending" || issue.state === "verified") {
+          const err = undoRepair(issue);
+          if (!err) undoneCount++;
+        }
+      }
+      if (failure && (failure.state === "pending" || failure.state === "verified")) {
+        const err = undoRepair(failure);
+        if (!err) undoneCount++;
+      }
+      sendResponse({ failure: visibleState(), issues: summarizePageIssues(), undoneCount });
+      announce();
+      return false;
+    }
     if (parsed.data.type === "START_PICKING") {
       if (!enabled) { sendResponse({ error: "Monitoring is off" }); return false; }
       if (failure?.state === "pending" || failure?.state === "verified") {
@@ -424,23 +668,25 @@ if (origin) {
       }
       const resolved = resolveCommunityTarget(document, origin, parsed.data.recipe);
       if (!resolved.ok) { sendResponse({ error: resolved.error }); return false; }
-      const preserved = savedOutline(resolved.target);
       if (failure) restoreOutline(failure);
-      failure = {
-        runId: crypto.randomUUID(),
-        fromCommunity: true,
+      const issue = upsertPageIssue({
         kind: resolved.kind,
         target: resolved.target,
         diagnosis: resolved.diagnosis,
         state: "preview",
-        ...preserved,
-      };
-      emitPipeline(failure, "detection", "done", `Repair Recipe matched ${resolved.kind}`);
-      emitPipeline(failure, "evidence", "done", "Verified local page metadata");
-      emitPipeline(failure, "routing", "done", "Approved community Repair Recipe", "rules-only", "RULES_ONLY");
-      emitPipeline(failure, "diagnosis", "done", resolved.diagnosis.action, "rules-only", "RULES_ONLY");
-      const error = applyRepair(failure);
-      if (error) { restoreOutline(failure); failure = null; sendResponse({ error }); return false; }
+        fromCommunity: true,
+      });
+      issue.kind = resolved.kind;
+      issue.diagnosis = resolved.diagnosis;
+      issue.state = "preview";
+      issue.fromCommunity = true;
+      failure = issue;
+      emitPipeline(issue, "detection", "done", `Repair Recipe matched ${resolved.kind}`);
+      emitPipeline(issue, "evidence", "done", "Verified local page metadata");
+      emitPipeline(issue, "routing", "done", "Approved community Repair Recipe", "rules-only", "RULES_ONLY");
+      emitPipeline(issue, "diagnosis", "done", resolved.diagnosis.action, "rules-only", "RULES_ONLY");
+      const error = applyRepair(issue);
+      if (error) { restoreOutline(issue); failure = null; sendResponse({ error }); return false; }
       sendResponse(visibleState());
       announce();
       return false;
