@@ -9,7 +9,8 @@
     "build": "npm run build -w @phantom/extension && npm run build -w @phantom/demo && npm run build -w @phantom/companion",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "node scripts/check-browser.mjs && playwright test",
+    "setup:e2e": "npm run build && playwright install chromium"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.0",
