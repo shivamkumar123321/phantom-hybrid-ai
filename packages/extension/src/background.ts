@@ -215,15 +215,19 @@ function sendCompanionRequest(port: chrome.runtime.Port, request: CompanionReque
   });
 }
 
-chrome.action.onClicked.addListener(async () => {
-  await chrome.sidePanel.open({ windowId: chrome.windows.WINDOW_ID_CURRENT });
+void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+
+chrome.action.onClicked.addListener((tab) => {
+  if (tab.windowId !== undefined) {
+    void chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {});
+  }
 });
 
 chrome.runtime.onMessage.addListener((untrusted: unknown, sender, sendResponse) => {
   if (typeof untrusted === "object" && untrusted !== null && "type" in untrusted && untrusted.type === "FAILURE_UPDATED") {
     const claimedOrigin = "origin" in untrusted && typeof untrusted.origin === "string" ? untrusted.origin : null;
     if (sender.tab?.id !== undefined && claimedOrigin && siteOrigin(sender.tab.url ?? "") === claimedOrigin) {
-      void chrome.runtime.sendMessage({ type: "FAILURE_NOTICE", tabId: sender.tab.id });
+      void chrome.runtime.sendMessage({ type: "FAILURE_NOTICE", tabId: sender.tab.id }).catch(() => {});
     }
     return false;
   }
@@ -243,10 +247,12 @@ chrome.runtime.onMessage.addListener((untrusted: unknown, sender, sendResponse) 
       return false;
     }
     void (async () => {
-      if (!await getMonitoring(message.origin)) return;
-      const key = interactionCountKey(message.origin);
-      const stored = await chrome.storage.local.get(key);
-      await chrome.storage.local.set({ [key]: (Number(stored[key]) || 0) + 1 });
+      try {
+        if (!await getMonitoring(message.origin)) return;
+        const key = interactionCountKey(message.origin);
+        const stored = await chrome.storage.local.get(key);
+        await chrome.storage.local.set({ [key]: (Number(stored[key]) || 0) + 1 });
+      } catch { /* Storage write skipped when unavailable. */ }
     })();
     sendResponse({ received: true });
     return false;
@@ -273,14 +279,18 @@ chrome.runtime.onMessage.addListener((untrusted: unknown, sender, sendResponse) 
   }
   if (message.type === "RECORD_REPAIR_HISTORY") {
     void (async () => {
-      if (siteOrigin(sender.tab?.url ?? "") !== message.entry.origin) { sendResponse({ error: "Wrong site" }); return; }
-      sendResponse({ history: await mutateRepairHistory((current) => upsertHistoryEntry(current, message.entry)) });
+      try {
+        if (siteOrigin(sender.tab?.url ?? "") !== message.entry.origin) { sendResponse({ error: "Wrong site" }); return; }
+        sendResponse({ history: await mutateRepairHistory((current) => upsertHistoryEntry(current, message.entry)) });
+      } catch { sendResponse({ history: [] }); }
     })();
     return true;
   }
   if (message.type === "UPDATE_REPAIR_HISTORY") {
     void (async () => {
-      sendResponse({ history: await mutateRepairHistory((current) => updateHistoryVerification(current, message.id, message.verificationResult)) });
+      try {
+        sendResponse({ history: await mutateRepairHistory((current) => updateHistoryVerification(current, message.id, message.verificationResult)) });
+      } catch { sendResponse({ history: [] }); }
     })();
     return true;
   }
@@ -295,93 +305,109 @@ chrome.runtime.onMessage.addListener((untrusted: unknown, sender, sendResponse) 
   }
   if (message.type === "SHARE_RECIPE") {
     void (async () => {
-      const clean = validateCommunityRecipe(message.recipe);
-      if (!clean) { sendResponse({ ok: false, error: "Invalid or sensitive Repair Recipe." }); return; }
-      const port = await ensureCompanionPort(true);
-      if (!port) { sendResponse({ ok: false, error: "Community sharing requires AI Companion and Firebase configuration." }); return; }
-      const reply = await sendCompanionRequest(port, { id: crypto.randomUUID(), type: "SHARE_RECIPE", recipe: clean });
-      if (reply?.type === "SHARE_RECIPE_RESPONSE") {
-        if (reply.ok && reply.recipe) {
-          const cached = await readCachedCommunityRecipes(clean.origin);
-          await writeCachedCommunityRecipes(clean.origin, [reply.recipe, ...cached.filter((r) => r.selectorHint !== clean.selectorHint)].slice(0, 10));
+      try {
+        const clean = validateCommunityRecipe(message.recipe);
+        if (!clean) { sendResponse({ ok: false, error: "Invalid or sensitive Repair Recipe." }); return; }
+        const port = await ensureCompanionPort(true);
+        if (!port) { sendResponse({ ok: false, error: "Community sharing requires AI Companion and Firebase configuration." }); return; }
+        const reply = await sendCompanionRequest(port, { id: crypto.randomUUID(), type: "SHARE_RECIPE", recipe: clean });
+        if (reply?.type === "SHARE_RECIPE_RESPONSE") {
+          if (reply.ok && reply.recipe) {
+            const cached = await readCachedCommunityRecipes(clean.origin);
+            await writeCachedCommunityRecipes(clean.origin, [reply.recipe, ...cached.filter((r) => r.selectorHint !== clean.selectorHint)].slice(0, 10));
+          }
+          sendResponse(reply);
+        } else {
+          sendResponse({ ok: false, error: "Community sharing timed out." });
         }
-        sendResponse(reply);
-      } else {
-        sendResponse({ ok: false, error: "Community sharing timed out." });
+      } catch {
+        sendResponse({ ok: false, error: "Could not share Repair Recipe." });
       }
     })();
     return true;
   }
   if (message.type === "GET_COMMUNITY_RECIPES") {
     void (async () => {
-      const cached = await readCachedCommunityRecipes(message.origin);
-      const port = await ensureCompanionPort(Boolean(message.fetchLive));
-      if (!port) { sendResponse({ recipes: cached, available: false }); return; }
-      const reply = await sendCompanionRequest(port, { id: crypto.randomUUID(), type: "GET_COMMUNITY_RECIPES", origin: message.origin }, 3000);
-      if (reply?.type === "COMMUNITY_RECIPES_RESPONSE") {
-        if (reply.available) {
-          const merged = await writeCachedCommunityRecipes(message.origin, reply.recipes);
-          sendResponse({ recipes: merged, available: true });
+      try {
+        const cached = await readCachedCommunityRecipes(message.origin);
+        const port = await ensureCompanionPort(Boolean(message.fetchLive));
+        if (!port) { sendResponse({ recipes: cached, available: false }); return; }
+        const reply = await sendCompanionRequest(port, { id: crypto.randomUUID(), type: "GET_COMMUNITY_RECIPES", origin: message.origin }, 3000);
+        if (reply?.type === "COMMUNITY_RECIPES_RESPONSE") {
+          if (reply.available) {
+            const merged = await writeCachedCommunityRecipes(message.origin, reply.recipes);
+            sendResponse({ recipes: merged, available: true });
+            return;
+          }
+          sendResponse({ recipes: cached, available: false });
           return;
         }
         sendResponse({ recipes: cached, available: false });
-        return;
+      } catch {
+        sendResponse({ recipes: [], available: false });
       }
-      sendResponse({ recipes: cached, available: false });
     })();
     return true;
   }
   if (message.type === "GET_COMPANION_STATUS") {
     void (async () => {
-      const port = await ensureCompanionPort(false);
-      if (!port) { sendResponse({ connected: false, env: UNAVAILABLE_AI_ENV }); return; }
-      const response = await sendCompanionRequest(port, { id: crypto.randomUUID(), type: "GET_AI_STATUS" }, 2000);
-      if (response?.type === "AI_STATUS_RESPONSE") sendResponse({ connected: true, env: response.env });
-      else sendResponse({ connected: false, env: UNAVAILABLE_AI_ENV });
+      try {
+        const port = await ensureCompanionPort(false);
+        if (!port) { sendResponse({ connected: false, env: UNAVAILABLE_AI_ENV }); return; }
+        const response = await sendCompanionRequest(port, { id: crypto.randomUUID(), type: "GET_AI_STATUS" }, 2000);
+        if (response?.type === "AI_STATUS_RESPONSE") sendResponse({ connected: true, env: response.env });
+        else sendResponse({ connected: false, env: UNAVAILABLE_AI_ENV });
+      } catch {
+        sendResponse({ connected: false, env: UNAVAILABLE_AI_ENV });
+      }
     })();
     return true;
   }
   if (message.type === "RUN_DIAGNOSIS") {
     void (async () => {
-      if (message.tabId !== undefined && message.tabUrl) activeTabUrls.set(message.tabId, message.tabUrl);
-      const safeEvidence = sanitizeEvidence(message.evidence);
-      const storedConsent = await getCloudConsent(safeEvidence.origin);
-      const effectiveConsent = message.overrideConsent ?? storedConsent;
-      const port = await ensureCompanionPort(true);
-      if (!await isTabCurrent(message.tabId, message.tabUrl)) { sendResponse({ stale: true }); return; }
-      if (port) {
-        const reply = await sendCompanionRequest(port, {
-          id: crypto.randomUUID(),
-          type: "DIAGNOSE_REQUEST",
-          runId: message.runId,
+      try {
+        if (message.tabId !== undefined && message.tabUrl) activeTabUrls.set(message.tabId, message.tabUrl);
+        const safeEvidence = sanitizeEvidence(message.evidence);
+        const storedConsent = await getCloudConsent(safeEvidence.origin);
+        const effectiveConsent = message.overrideConsent ?? storedConsent;
+        const port = await ensureCompanionPort(true);
+        if (!await isTabCurrent(message.tabId, message.tabUrl)) { sendResponse({ stale: true }); return; }
+        if (port) {
+          const reply = await sendCompanionRequest(port, {
+            id: crypto.randomUUID(),
+            type: "DIAGNOSE_REQUEST",
+            runId: message.runId,
+            evidence: safeEvidence,
+            rulesFallback: message.rulesFallback,
+            cloudConsent: effectiveConsent,
+            cloudDecision: message.cloudDecision,
+          });
+          if (!await isTabCurrent(message.tabId, message.tabUrl)) { sendResponse({ stale: true }); return; }
+          if (reply?.type === "DIAGNOSE_RESPONSE") {
+            if (message.runId) {
+              for (const event of outcomeToPipelineEvents(message.runId, safeEvidence.origin, reply.outcome)) {
+                recentPipelineEvents = [...recentPipelineEvents, event].slice(-30);
+              }
+            }
+            sendResponse({ outcome: reply.outcome, companionConnected: true });
+            return;
+          }
+        }
+        const outcome = await resolveDiagnosisOutcome({
           evidence: safeEvidence,
           rulesFallback: message.rulesFallback,
+          env: UNAVAILABLE_AI_ENV,
           cloudConsent: effectiveConsent,
           cloudDecision: message.cloudDecision,
+          runModel: async () => { throw new Error("Companion unavailable"); },
         });
-        if (!await isTabCurrent(message.tabId, message.tabUrl)) { sendResponse({ stale: true }); return; }
-        if (reply?.type === "DIAGNOSE_RESPONSE") {
-          if (message.runId) {
-            for (const event of outcomeToPipelineEvents(message.runId, safeEvidence.origin, reply.outcome)) {
-              recentPipelineEvents = [...recentPipelineEvents, event].slice(-30);
-            }
-          }
-          sendResponse({ outcome: reply.outcome, companionConnected: true });
-          return;
+        if (message.runId) {
+          for (const event of outcomeToPipelineEvents(message.runId, safeEvidence.origin, outcome)) pushPipelineEvent(event);
         }
+        sendResponse({ outcome, companionConnected: false });
+      } catch {
+        sendResponse({ error: "Could not complete diagnosis." });
       }
-      const outcome = await resolveDiagnosisOutcome({
-        evidence: safeEvidence,
-        rulesFallback: message.rulesFallback,
-        env: UNAVAILABLE_AI_ENV,
-        cloudConsent: effectiveConsent,
-        cloudDecision: message.cloudDecision,
-        runModel: async () => { throw new Error("Companion unavailable"); },
-      });
-      if (message.runId) {
-        for (const event of outcomeToPipelineEvents(message.runId, safeEvidence.origin, outcome)) pushPipelineEvent(event);
-      }
-      sendResponse({ outcome, companionConnected: false });
     })();
     return true;
   }

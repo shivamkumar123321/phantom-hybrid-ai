@@ -419,6 +419,8 @@ scanPageButton.addEventListener("click", () => {
     try {
       const res = await chrome.tabs.sendMessage(currentTabId, { type: "SCAN_PAGE" }) as { issues?: PageIssueSummary[] };
       renderPageIssues(res?.issues ?? []);
+    } catch {
+      status.textContent = "Reload this webpage once so PHANTOM can connect to it.";
     } finally {
       scanPageButton.disabled = !monitor.checked || !currentOrigin;
     }
@@ -433,6 +435,8 @@ fixAllSafeButton.addEventListener("click", () => {
       if (res?.failure !== undefined) renderFailure(res.failure);
       if (res?.issues) renderPageIssues(res.issues);
       void refreshHistory();
+    } catch {
+      status.textContent = "Reload this webpage once so PHANTOM can connect to it.";
     } finally {
       fixAllSafeButton.disabled = false;
     }
@@ -447,6 +451,8 @@ undoAllButton.addEventListener("click", () => {
       if (res?.failure !== undefined) renderFailure(res.failure);
       if (res?.issues) renderPageIssues(res.issues);
       void refreshHistory();
+    } catch {
+      status.textContent = "Reload this webpage once so PHANTOM can connect to it.";
     } finally {
       undoAllButton.disabled = false;
     }
@@ -456,8 +462,12 @@ undoAllButton.addEventListener("click", () => {
 async function showStatus(origin: string, enabled: boolean): Promise<void> {
   if (!enabled) { status.textContent = "Monitoring is off for this site."; return; }
   const key = interactionCountKey(origin);
-  const stored = await chrome.storage.local.get(key);
-  if (currentOrigin === origin) status.textContent = `Monitoring is on. ${Number(stored[key]) || 0} safe interactions observed.`;
+  try {
+    const stored = await chrome.storage.local.get(key);
+    if (currentOrigin === origin) status.textContent = `Monitoring is on. ${Number(stored[key]) || 0} safe interactions observed.`;
+  } catch {
+    if (currentOrigin === origin) status.textContent = "Monitoring is on.";
+  }
 }
 
 function isMonitorableSite(url: string): string | null {

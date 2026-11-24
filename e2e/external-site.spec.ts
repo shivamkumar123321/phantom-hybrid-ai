@@ -50,14 +50,25 @@ test("proactively scans external sites without data-phantom-* attributes, fixes 
     if (!worker) worker = await context.waitForEvent("serviceworker", { predicate: (candidate) => candidate.url().endsWith("/background.js") });
     const extensionId = new URL(worker.url()).host;
 
+    const swErrors: string[] = [];
+    worker.on("console", (msg) => {
+      if (msg.type() === "error") swErrors.push(msg.text());
+    });
+    await worker.evaluate(async (origin) => {
+      self.addEventListener("unhandledrejection", (event) => {
+        console.error("unhandledrejection:", String(event.reason));
+      });
+      // Enable monitoring BEFORE opening the side panel so FAILURE_UPDATED fires with no panel listening
+      await chrome.storage.local.set({ [`monitoring:${origin}`]: true });
+    }, `http://127.0.0.1:${port}`);
+
     const extPage = await context.newPage();
     await extPage.goto(`http://127.0.0.1:${port}`, { waitUntil: "networkidle" });
+    await extPage.waitForTimeout(300);
 
     const panel = await context.newPage();
     await panel.goto(`chrome-extension://${extensionId}/sidepanel.html`);
     await expect(panel.locator("#site")).toContainText(`127.0.0.1:${port}`);
-
-    await panel.locator("#monitor").check();
     await expect(panel.locator("#status")).toContainText("Monitoring is on");
 
     // Proactive Page Scan finds all 4 non-sensitive issues automatically with zero user clicks on the page
@@ -83,6 +94,7 @@ test("proactively scans external sites without data-phantom-* attributes, fixes 
     await expect(extPage.locator("#ext-img-2")).toHaveAttribute("src", "/hjkl.jpg");
     await expect(extPage.locator("#ext-blocked-link")).toHaveCSS("pointer-events", "none");
     await expect(extPage.locator("#ext-submit")).toHaveAttribute("type", "button");
+    expect(swErrors).toEqual([]);
   } finally {
     await context.close();
     server.close();
