@@ -7,7 +7,7 @@ const root = dirname(fileURLToPath(import.meta.url));
 const html = await readFile(join(root, "dist", "index.html"));
 const backup = await readFile(join(root, "dist", "backup.svg"));
 const favicon = await readFile(join(root, "dist", "favicon.svg"));
-const port = Number(process.env.PORT || 4173);
+const port = Number(process.env.PORT || 5000);
 createServer((request, response) => {
   if (request.url === "/backup.svg") { response.writeHead(200, { "content-type": "image/svg+xml" }); response.end(backup); return; }
   if (request.url === "/favicon.svg") { response.writeHead(200, { "content-type": "image/svg+xml" }); response.end(favicon); return; }
