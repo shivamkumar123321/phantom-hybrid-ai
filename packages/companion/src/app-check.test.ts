@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { resolveAppCheckConfig } from "./firebase-ai";
+import { resolveAppCheckConfig, resolveAppCheckProvider } from "./firebase-ai";
 
 describe("Firebase App Check enforcement policy", () => {
+  it("defaults to Google Cloud Fraud Defense (reCAPTCHA Enterprise) and supports v3 fallback", () => {
+    expect(resolveAppCheckProvider()).toBe("enterprise");
+    expect(resolveAppCheckProvider("enterprise")).toBe("enterprise");
+    expect(resolveAppCheckProvider("v3")).toBe("v3");
+    expect(resolveAppCheckProvider("V3")).toBe("v3");
+  });
   it("enforces reCAPTCHA v3 and drops debug tokens in production builds", () => {
     expect(resolveAppCheckConfig({
       isProd: true,
